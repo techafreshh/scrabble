@@ -61,6 +61,10 @@ func _initialize() -> void:
 		if call("test_rooms_suite") != true:
 			failed += 1
 			push_error("FAIL test_rooms_suite: did not finish (runtime error?)")
+	elif suite == "net_client":
+		if call("test_net_client_suite") != true:
+			failed += 1
+			push_error("FAIL test_net_client_suite: did not finish (runtime error?)")
 	elif suite == "dictionary":
 		for t: String in [
 			"test_dictionary_load",
@@ -93,6 +97,7 @@ func _initialize() -> void:
 		"test_game_binding_suite",
 			"test_hotseat_suite",
 			"test_rooms_suite",
+			"test_net_client_suite",
 		]:
 			if call(t) != true:
 				failed += 1
@@ -187,6 +192,8 @@ func _get_suite_filter() -> String:
 			return "hotseat"
 		if arg == "rooms":
 			return "rooms"
+		if arg == "net_client":
+			return "net_client"
 	return ""
 
 
@@ -319,4 +326,10 @@ func test_hotseat_suite() -> bool:
 func test_rooms_suite() -> bool:
 	var rooms_tests: GDScript = load("res://tests/test_rooms.gd")
 	rooms_tests.run_all(self)
+	return true
+
+
+func test_net_client_suite() -> bool:
+	var net_client_tests: GDScript = load("res://tests/test_net_client.gd")
+	net_client_tests.run_all(self, _get_suite_filter() == "net_client")
 	return true
