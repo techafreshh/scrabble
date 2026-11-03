@@ -29,6 +29,7 @@ import os
 import socket
 import struct
 import sys
+import time
 from urllib.parse import urlparse
 
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -183,6 +184,27 @@ def _flat_str(value):
     return str(value)
 
 
+_FLAT_KEYS = ("m", "ok", "code", "token", "seat", "you", "seats",
+             "started", "turn", "accepted", "points", "total", "reason",
+             "auto_pass", "rack", "over", "ending", "chat_ok", "emote_ok",
+             "recalled", "bag_remaining", "error")
+
+
+def _flat_lines(reply):
+    lines = []
+    if isinstance(reply, dict):
+        for key in _FLAT_KEYS:
+            if key in reply:
+                lines.append("%s=%s" % (key, _flat_str(reply[key])))
+    return lines
+
+
+def _rack_str(value):
+    if not isinstance(value, list):
+        return ""
+    return "".join("?" if str(x) == "" else str(x) for x in value)
+
+
 def check_expects(reply, expects):
     for item in expects or []:
         if "=" not in item:
@@ -243,6 +265,8 @@ def run_rpc_action(url, timeout, payload, expects, on_ok):
         return _fail("empty reply from server")
     reply = messages[0]
     if not reply.get("ok", False):
+        for line in _flat_lines(reply):
+            print(line)
         print("error=%s" % reply.get("error", reply.get("reason", "UNKNOWN")))
         return 1
     for line in on_ok(reply):
@@ -253,6 +277,18 @@ def run_rpc_action(url, timeout, payload, expects, on_ok):
 
 def do_create(args):
     payload = {"v": 1, "m": "create_room", "name": args.name or "Host"}
+    opts = {}
+    if args.timer_off:
+        opts["timer_on"] = False
+        payload["timer_on"] = False
+    if args.turn_secs is not None:
+        opts["turn_secs"] = args.turn_secs
+        payload["turn_secs"] = args.turn_secs
+    if args.test_mode:
+        opts["test_mode"] = True
+        payload["test_mode"] = True
+    if opts:
+        payload["options"] = opts
 
     def on_ok(reply):
         return ("code=%s" % reply.get("code", ""),
@@ -316,6 +352,167 @@ def do_chat(args, code):
     return run_rpc_action(args.url, args.timeout, payload, args.expect, on_ok)
 
 
+def do_place_tiles(args, code):
+    try:
+        tiles = json.loads(args.tiles) if args.tiles else []
+    except ValueError as exc:
+        print("probe failure: bad --tiles JSON: %s" % exc, file=sys.stderr)
+        return 2
+    payload = {"v": 1, "m": "place_tiles", "code": code,
+               "token": args.token or "", "tiles": tiles}
+
+    def on_ok(reply):
+        return ("accepted=%s" % _flat_str(reply.get("accepted", "")),
+                "points=%s" % _flat_str(reply.get("points", "")),
+                "reason=%s" % _flat_str(reply.get("reason", "")),
+                "total=%s" % _flat_str(reply.get("total", "")),
+                "turn=%s" % _flat_str(reply.get("turn", "")))
+
+    return run_rpc_action(args.url, args.timeout, payload, args.expect, on_ok)
+
+
+def do_rack_dump(args, code):
+    payload = {"v": 1, "m": "get_rack", "code": code,
+               "token": args.token or ""}
+
+    def on_ok(reply):
+        return ("rack=%s" % _rack_str(reply.get("rack", "")),
+                "seat=%s" % _flat_str(reply.get("seat", "")),
+                "turn=%s" % _flat_str(reply.get("turn", "")))
+
+    return run_rpc_action(args.url, args.timeout, payload, args.expect, on_ok)
+
+
+def _parse_debug_tiles(text):
+    s = (text or "").strip()
+    if s.startswith("["):
+        try:
+            value = json.loads(s)
+        except ValueError as exc:
+            raise IOError("bad tiles JSON: %s" % exc)
+        if isinstance(value, list):
+            return [str(x) for x in value]
+        return [str(value)]
+    return [ch for ch in s if ch not in (",", ";", "|", " ", "\t")]
+
+
+def do_debug_rack(args, code):
+    spec = args.debug_rack or ""
+    if ":" not in spec:
+        print("probe failure: --debug-rack needs SEAT:TILES", file=sys.stderr)
+        return 2
+    seat_s, _, tiles_s = spec.partition(":")
+    try:
+        seat = int(seat_s.strip())
+    except ValueError:
+        print("probe failure: bad --debug-rack seat %r" % seat_s,
+              file=sys.stderr)
+        return 2
+    try:
+        tiles = _parse_debug_tiles(tiles_s)
+    except IOError as exc:
+        print("probe failure: %s" % exc, file=sys.stderr)
+        return 2
+    payload = {"v": 1, "m": "debug_set_rack", "code": code,
+               "token": args.token or "", "seat": seat, "tiles": tiles}
+
+    def on_ok(reply):
+        return ("seat=%s" % _flat_str(reply.get("seat", "")),
+                "rack=%s" % _rack_str(reply.get("rack", "")))
+
+    return run_rpc_action(args.url, args.timeout, payload, args.expect, on_ok)
+
+
+def do_debug_bag(args, code):
+    try:
+        tiles = _parse_debug_tiles(args.debug_bag)
+    except IOError as exc:
+        print("probe failure: %s" % exc, file=sys.stderr)
+        return 2
+    payload = {"v": 1, "m": "debug_set_bag", "code": code,
+               "token": args.token or "", "tiles": tiles}
+
+    def on_ok(reply):
+        return ("bag_remaining=%s"
+                % _flat_str(reply.get("bag_remaining", "")),)
+
+    return run_rpc_action(args.url, args.timeout, payload, args.expect, on_ok)
+
+
+def do_listen(args, code):
+    try:
+        secs = float(args.listen)
+    except (TypeError, ValueError):
+        print("probe failure: bad --listen value %r" % (args.listen,),
+              file=sys.stderr)
+        return 2
+    payload = {"v": 1, "m": "get_rack", "code": code,
+               "token": args.token or ""}
+    try:
+        sock = open_socket(args.url, args.timeout)
+    except (OSError, IOError) as exc:
+        return _fail("cannot connect: %s" % exc)
+    try:
+        try:
+            send_masked_text(sock, json.dumps(payload, separators=(",", ":")))
+        except (OSError, ValueError) as exc:
+            return _fail("failed to send listen probe: %s" % exc)
+        end = time.monotonic() + max(0.0, secs)
+        while True:
+            remaining = end - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                sock.settimeout(remaining)
+                opcode, raw = read_frame(sock)
+            except IOError:
+                break
+            if opcode == 0x8:
+                break
+            if opcode != 0x1:
+                continue
+            try:
+                text = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                print("frame=<non-utf8>")
+                continue
+            try:
+                msg = json.loads(text)
+            except ValueError:
+                print("frame=%s" % text)
+                continue
+            print("frame=%s" % json.dumps(msg, separators=(",", ":"),
+                                            sort_keys=True))
+            if isinstance(msg, dict) and msg.get("auto_pass") is True:
+                print("auto_pass=true")
+    finally:
+        sock.close()
+    return 0
+
+
+def do_check_private(args):
+    code, tok_a, tok_b = args.check_private
+    try:
+        ra = rpc_exchange(args.url, args.timeout,
+                          {"v": 1, "m": "get_rack", "code": code,
+                           "token": tok_a})
+        rb = rpc_exchange(args.url, args.timeout,
+                          {"v": 1, "m": "get_rack", "code": code,
+                           "token": tok_b})
+    except (OSError, IOError) as exc:
+        return _fail("request failed: %s" % exc)
+    fa = ""
+    fb = ""
+    if ra and isinstance(ra[0], dict) and ra[0].get("ok", False):
+        fa = _rack_str(ra[0].get("rack", ""))
+    if rb and isinstance(rb[0], dict) and rb[0].get("ok", False):
+        fb = _rack_str(rb[0].get("rack", ""))
+    print("rack_a=%s" % fa)
+    print("rack_b=%s" % fb)
+    print("racks_private=%s" % ("true" if (fa and fb and fa != fb) else "false"))
+    return 0
+
+
 def do_generic_rpc(args):
     try:
         payload = json.loads(args.rpc)
@@ -334,11 +531,7 @@ def do_generic_rpc(args):
         payload["v"] = 1
 
     def on_ok(reply):
-        lines = []
-        for key in ("m", "ok", "code", "token", "seat", "you", "seats",
-                    "started", "turn", "accepted", "total", "error"):
-            if key in reply:
-                lines.append("%s=%s" % (key, _flat_str(reply[key])))
+        lines = _flat_lines(reply)
         lines.append("json=%s" % json.dumps(reply, separators=(",", ":"),
                                             sort_keys=True))
         return lines
@@ -370,6 +563,31 @@ def main(argv=None):
     parser.add_argument("--chat", nargs="?", const="", default=None,
                         metavar="TEXT",
                         help="send a chat message (needs --code/--token)")
+    parser.add_argument("--place-tiles", action="store_true",
+                        help="commit tiles (needs --code/--token/--tiles)")
+    parser.add_argument("--tiles", default=None, metavar="JSON",
+                        help="tiles array for --place-tiles")
+    parser.add_argument("--rack-dump", action="store_true",
+                        help="print this seat's private rack (needs --code/--token)")
+    parser.add_argument("--debug-rack", default=None, metavar="SEAT:TILES",
+                        help="pin a seat rack on a test-mode room "
+                        "(needs --code/--token)")
+    parser.add_argument("--debug-bag", default=None, metavar="TILES",
+                        help="replace the bag on a test-mode room "
+                        "(needs --code/--token)")
+    parser.add_argument("--listen", nargs="?", const=4.0, default=None,
+                        type=float, metavar="SECS",
+                        help="watch room broadcasts for SECS seconds "
+                        "(needs --code/--token)")
+    parser.add_argument("--check-private", nargs=3, default=None,
+                        metavar=("CODE", "TOKA", "TOKB"),
+                        help="compare two seats' racks for privacy")
+    parser.add_argument("--timer-off", action="store_true",
+                        help="with --create: store timer_on false")
+    parser.add_argument("--turn-secs", type=int, default=None, metavar="N",
+                        help="with --create: per-turn clock override in seconds")
+    parser.add_argument("--test-mode", action="store_true",
+                        help="with --create: allow host debug pin RPCs")
     parser.add_argument("--rpc", default=None, metavar="JSON",
                         help="send a raw JSON object frame")
     parser.add_argument("--expect", action="append", default=[],
@@ -399,10 +617,14 @@ def main(argv=None):
         return do_join(args, code)
     if args.positional_code is not None and args.rpc is None \
             and not (args.add_bot or args.start or args.pass_turn
-                     or args.chat is not None):
+                     or args.chat is not None or args.place_tiles
+                     or args.rack_dump or args.debug_rack is not None
+                     or args.debug_bag is not None or args.listen is not None):
         return do_join(args, args.positional_code)
     needs_room = args.add_bot or args.start or args.pass_turn \
-        or args.chat is not None
+        or args.chat is not None or args.place_tiles or args.rack_dump \
+        or args.debug_rack is not None or args.debug_bag is not None \
+        or args.listen is not None
     if needs_room:
         code = args.code or args.positional_code
         if not code:
@@ -419,7 +641,19 @@ def main(argv=None):
             return do_start(args, code)
         if args.pass_turn:
             return do_pass_turn(args, code)
+        if args.place_tiles:
+            return do_place_tiles(args, code)
+        if args.rack_dump:
+            return do_rack_dump(args, code)
+        if args.debug_rack is not None:
+            return do_debug_rack(args, code)
+        if args.debug_bag is not None:
+            return do_debug_bag(args, code)
+        if args.listen is not None:
+            return do_listen(args, code)
         return do_chat(args, code)
+    if args.check_private is not None:
+        return do_check_private(args)
     if args.rpc is not None:
         return do_generic_rpc(args)
     parser.print_usage(sys.stderr)
