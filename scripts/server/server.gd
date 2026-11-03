@@ -69,4 +69,6 @@ func _drain(ws: WebSocketPeer) -> void:
 		if not is_text:
 			continue
 		if is_ping_text(packet.get_string_from_utf8()):
-			ws.send_text("PONG")
+			var err := ws.send_text("PONG")
+			if err != OK:
+				push_error("Wordtable server failed to send PONG: %s" % err)
