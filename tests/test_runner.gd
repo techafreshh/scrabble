@@ -13,6 +13,10 @@ func _initialize() -> void:
 		if call("test_bag_suite") != true:
 			failed += 1
 			push_error("FAIL test_bag_suite: did not finish (runtime error?)")
+	elif suite == "board":
+		if call("test_board_suite") != true:
+			failed += 1
+			push_error("FAIL test_board_suite: did not finish (runtime error?)")
 	else:
 		for t: String in [
 			"test_engine_version",
@@ -21,6 +25,7 @@ func _initialize() -> void:
 			"test_ping_match",
 			"test_ping_reject",
 			"test_bag_suite",
+			"test_board_suite",
 		]:
 			if call(t) != true:
 				failed += 1
@@ -93,10 +98,18 @@ func _get_suite_filter() -> String:
 			return args[i + 1].strip_edges().to_lower()
 		if arg == "bag":
 			return "bag"
+		if arg == "board":
+			return "board"
 	return ""
 
 
 func test_bag_suite() -> bool:
 	var bag_tests: GDScript = load("res://tests/test_bag.gd")
 	bag_tests.run_all(self)
+	return true
+
+
+func test_board_suite() -> bool:
+	var board_tests: GDScript = load("res://tests/test_board.gd")
+	board_tests.run_all(self)
 	return true
