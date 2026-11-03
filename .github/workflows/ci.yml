@@ -1,0 +1,53 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Godot 4.7.2
+        run: |
+          set -euxo pipefail
+          GODOT_VERSION="4.7.2-stable"
+          ASSET="Godot_v${GODOT_VERSION}_linux.x86_64.zip"
+          curl -fSL -o /tmp/godot.zip \
+            "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}/${ASSET}"
+          sudo unzip -o /tmp/godot.zip -d /usr/local/bin
+          sudo chmod +x /usr/local/bin/godot
+          rm /tmp/godot.zip
+          godot --version
+
+      - name: Check version
+        run: |
+          set -euxo pipefail
+          godot --headless --version | tee /tmp/godot_version.txt
+          grep -q "4\.7\." /tmp/godot_version.txt
+
+      - name: Import
+        timeout-minutes: 5
+        run: godot --headless --path . --import
+
+      - name: Run headless tests
+        timeout-minutes: 5
+        run: godot --headless --path . --script res://tests/test_runner.gd
+
+      - name: Probe dev server
+        timeout-minutes: 5
+        run: |
+          set -euxo pipefail
+          godot --headless --path . > /tmp/godot_server.log 2>&1 &
+          SERVER_PID=$!
+          cleanup() { kill "$SERVER_PID" 2>/dev/null || true; }
+          trap cleanup EXIT
+          for i in $(seq 1 30); do
+            if python3 -c "import socket; socket.create_connection(('127.0.0.1', 9080), timeout=1).close()" 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          python3 tests/ws_probe.py --ping
