@@ -1,9 +1,13 @@
 # Wordtable room registry (headless authoritative host, no scene deps).
-# Owns room codes, per-seat session tokens, the host gate, and one LocalGame
-# per started room for real move adjudication. Transport-agnostic: the server
-# feeds one Dictionary per JSON text frame into `handle_dict` and sends back
-# every Dictionary in the returned Array (reply first, broadcasts after).
-# Run headless via res://tests/test_runner.gd (`--suite rooms` or full run).
+# Owns room codes, per-seat session tokens, the host gate, timer fields,
+# and one LocalGame per started room for real move adjudication. Pure
+# policy (caps, turn gating, reason mapping, clocks, personalization)
+# lives in GameBinding; this file owns the rooms dict, the game
+# instances, and the `handle_dict` dispatch. Transport-agnostic: the
+# server feeds one Dictionary per JSON text frame into `handle_dict` and
+# sends back every Dictionary in the returned Array (reply first,
+# broadcasts after; the server fans broadcasts out with per-recipient
+# racks). Run headless via res://tests/test_runner.gd.
 class_name RoomRegistry
 extends RefCounted
 
@@ -19,6 +23,7 @@ const KNOWN_METHODS := [
 	"create_room", "join_room", "add_bot", "remove_bot", "start_game",
 	"place_tiles", "place", "pass", "pass_turn", "exchange", "recall",
 	"shuffle_rack", "shuffle", "chat", "emote",
+	"get_rack", "rack", "debug_set_rack", "debug_set_bag",
 ]
 
 var _rooms: Dictionary = {}
@@ -60,9 +65,7 @@ func debug_game(code: String):
 func create_room(player_name: String, options: Dictionary = {}) -> Dictionary:
 	var code := _gen_code()
 	var token := _gen_token()
-	var who := player_name.strip_edges()
-	if who == "":
-		who = "Host"
+	var who := GameBinding.clean_name(player_name, "Host")
 	var room := {
 		"code": code,
 		"seats": [{"seat": 0, "name": who, "token": token, "is_bot": false}],
@@ -70,13 +73,17 @@ func create_room(player_name: String, options: Dictionary = {}) -> Dictionary:
 		"game": null,
 		"options": options.duplicate(true),
 		"seed": 0,
+		"timer_on": GameBinding.parse_timer_on(options),
+		"turn_secs": GameBinding.parse_turn_secs(options),
+		"test_mode": GameBinding.parse_test_mode(options),
+		"deadline_ms": -1,
 	}
 	_rooms[code] = room
 	return {
 		"ok": true, "m": "create_room", "code": code, "room": code,
 		"room_code": code, "seat": 0, "player_id": 0, "you": 0,
 		"token": token, "session": token, "seats": 1, "seat_count": 1,
-		"started": false, "timer_on": bool(options.get("timer_on", false)),
+		"started": false, "timer_on": bool(room.get("timer_on", true)),
 		"seats_list": _public_seats(room),
 	}
 
@@ -87,9 +94,7 @@ func join_room(code: String, player_name: String, token: String = "") -> Diction
 	var room := _get_room(code)
 	if room.is_empty():
 		return _gate_error("join_room", "NO_ROOM")
-	var who := player_name.strip_edges()
-	if who == "":
-		who = "Guest"
+	var who := GameBinding.clean_name(player_name, "Guest")
 	var seats: Array = room["seats"]
 	var again := _seat_by_token(room, token)
 	if not again.is_empty():
@@ -207,8 +212,9 @@ func start_game(code: String, token: String) -> Dictionary:
 	room["game"] = game
 	room["started"] = true
 	room["seed"] = seed
+	GameBinding.refresh_deadline(room, _clock_ms())
 	var delta: Dictionary = game.state_delta()
-	return {
+	var reply := {
 		"ok": true, "m": "start_game", "code": str(room["code"]),
 		"started": true, "turn": game.current_player(),
 		"seats": seats.size(), "seat_count": seats.size(),
@@ -216,11 +222,12 @@ func start_game(code: String, token: String) -> Dictionary:
 		"ending": game.ending(), "delta": delta,
 		"seats_list": _public_seats(room),
 	}
+	return GameBinding.personalize(reply, _seat_no(room, token), game.rack_letters(_seat_no(room, token)))
 
 
 # tiles: [{square: "H8", letter: "Q", blank_as: ""}] with col/row/letter
-# dicts also accepted. Any seated token may submit for the current player;
-# seat==turn gating is deliberately left to a later lap (see protocol.md).
+# dicts also accepted. Only the seat holding the turn may submit; every
+# other seated token gets NOT_YOUR_TURN.
 func place_tiles(code: String, token: String, tiles: Array) -> Dictionary:
 	var room := _get_room(code)
 	if room.is_empty():
@@ -229,33 +236,41 @@ func place_tiles(code: String, token: String, tiles: Array) -> Dictionary:
 		return _gate_error("place_tiles", "NO_TOKEN")
 	if not bool(room.get("started", false)) or room.get("game") == null:
 		return _gate_error("place_tiles", "BAD_STATE")
+	var game: LocalGame = room["game"]
+	var me := _seat_no(room, token)
+	if me != game.current_player():
+		return _turn_error("place_tiles", room, me)
 	var conv := _to_placements(tiles)
 	if not bool(conv.get("ok", false)):
 		return _gate_error("place_tiles", str(conv.get("error", "BAD_TILES")))
-	var game: LocalGame = room["game"]
 	var res: Dictionary = game.place(conv.get("placements", []), conv.get("blank_map", {}))
 	if not bool(res.get("ok", false)):
 		return {
 			"ok": false, "m": "place_tiles", "code": str(room["code"]),
-			"error": str(res.get("reason", "BAD_PLAY")),
-			"reason": str(res.get("reason", "BAD_PLAY")),
+			"accepted": false, "points": 0,
+			"error": GameBinding.map_reason(str(res.get("reason", "BAD_PLAY"))),
+			"reason": GameBinding.map_reason(str(res.get("reason", "BAD_PLAY"))),
 			"reason_word": str(res.get("reason_word", "")),
 			"kind": str(res.get("kind", "reject")),
 			"total": int(res.get("total", 0)),
 			"turn": game.current_player(), "scores": game.scores(),
 			"over": game.is_over(), "ending": game.ending(),
 		}
-	return {
+	GameBinding.refresh_deadline(room, _clock_ms())
+	var total := int(res.get("total", 0))
+	var reply := {
 		"ok": true, "m": "place_tiles", "code": str(room["code"]),
 		"kind": "commit", "reason": "OK",
+		"accepted": true, "points": total,
 		"words": res.get("words", []),
 		"main_points": int(res.get("main_points", 0)),
 		"cross_points": int(res.get("cross_points", 0)),
-		"bingo": int(res.get("bingo", 0)), "total": int(res.get("total", 0)),
+		"bingo": int(res.get("bingo", 0)), "total": total,
 		"turn": game.current_player(), "scores": game.scores(),
 		"over": game.is_over(), "ending": game.ending(),
 		"delta": res.get("delta", {}),
 	}
+	return GameBinding.personalize(reply, me, game.rack_letters(me))
 
 
 func pass_turn(code: String, token: String) -> Dictionary:
@@ -267,22 +282,28 @@ func pass_turn(code: String, token: String) -> Dictionary:
 	if not bool(room.get("started", false)) or room.get("game") == null:
 		return _gate_error("pass", "BAD_STATE")
 	var game: LocalGame = room["game"]
+	var me := _seat_no(room, token)
+	if me != game.current_player():
+		return _turn_error("pass", room, me)
 	var res: Dictionary = game.pass_turn()
 	if not bool(res.get("ok", false)):
 		return {
 			"ok": false, "m": "pass", "code": str(room["code"]),
-			"error": str(res.get("reason", "BAD_PLAY")),
-			"reason": str(res.get("reason", "BAD_PLAY")),
+			"accepted": false,
+			"error": GameBinding.map_reason(str(res.get("reason", "BAD_PLAY"))),
+			"reason": GameBinding.map_reason(str(res.get("reason", "BAD_PLAY"))),
 			"turn": game.current_player(), "scores": game.scores(),
 			"over": game.is_over(), "ending": game.ending(),
 		}
-	return {
+	GameBinding.refresh_deadline(room, _clock_ms())
+	var reply := {
 		"ok": true, "m": "pass", "code": str(room["code"]),
 		"kind": "pass", "reason": "OK", "accepted": true,
 		"turn": game.current_player(), "scores": game.scores(),
 		"over": game.is_over(), "ending": game.ending(),
 		"delta": res.get("delta", {}),
 	}
+	return GameBinding.personalize(reply, me, game.rack_letters(me))
 
 
 func exchange(code: String, token: String, count: int) -> Dictionary:
@@ -294,22 +315,28 @@ func exchange(code: String, token: String, count: int) -> Dictionary:
 	if not bool(room.get("started", false)) or room.get("game") == null:
 		return _gate_error("exchange", "BAD_STATE")
 	var game: LocalGame = room["game"]
+	var me := _seat_no(room, token)
+	if me != game.current_player():
+		return _turn_error("exchange", room, me)
 	var res: Dictionary = game.exchange(count)
 	if not bool(res.get("ok", false)):
 		return {
 			"ok": false, "m": "exchange", "code": str(room["code"]),
-			"error": str(res.get("reason", "BAD_PLAY")),
-			"reason": str(res.get("reason", "BAD_PLAY")),
+			"accepted": false,
+			"error": GameBinding.map_reason(str(res.get("reason", "BAD_PLAY"))),
+			"reason": GameBinding.map_reason(str(res.get("reason", "BAD_PLAY"))),
 			"turn": game.current_player(), "scores": game.scores(),
 			"over": game.is_over(), "ending": game.ending(),
 		}
-	return {
+	GameBinding.refresh_deadline(room, _clock_ms())
+	var reply := {
 		"ok": true, "m": "exchange", "code": str(room["code"]),
 		"kind": "exchange", "reason": "OK", "accepted": true,
 		"turn": game.current_player(), "scores": game.scores(),
 		"over": game.is_over(), "ending": game.ending(),
 		"delta": res.get("delta", {}),
 	}
+	return GameBinding.personalize(reply, me, game.rack_letters(me))
 
 
 func recall(code: String, token: String) -> Dictionary:
@@ -321,8 +348,11 @@ func recall(code: String, token: String) -> Dictionary:
 	if not bool(room.get("started", false)) or room.get("game") == null:
 		return _gate_error("recall", "BAD_STATE")
 	var game: LocalGame = room["game"]
+	var me := _seat_no(room, token)
+	if me != game.current_player():
+		return _turn_error("recall", room, me)
 	var res: Dictionary = game.recall()
-	return {
+	var reply := {
 		"ok": true, "m": "recall", "code": str(room["code"]),
 		"kind": "recall", "reason": "OK",
 		"recalled": int(res.get("recalled", 0)),
@@ -330,6 +360,7 @@ func recall(code: String, token: String) -> Dictionary:
 		"turn": game.current_player(), "scores": game.scores(),
 		"over": game.is_over(), "ending": game.ending(),
 	}
+	return GameBinding.personalize(reply, me, game.rack_letters(me))
 
 
 func shuffle_rack(code: String, token: String) -> Dictionary:
@@ -341,20 +372,149 @@ func shuffle_rack(code: String, token: String) -> Dictionary:
 	if not bool(room.get("started", false)) or room.get("game") == null:
 		return _gate_error("shuffle_rack", "BAD_STATE")
 	var game: LocalGame = room["game"]
+	var me := _seat_no(room, token)
+	if me != game.current_player():
+		return _turn_error("shuffle_rack", room, me)
 	var res: Dictionary = game.shuffle()
 	if not bool(res.get("ok", false)):
 		return {
 			"ok": false, "m": "shuffle_rack", "code": str(room["code"]),
-			"error": str(res.get("reason", "BAD_PLAY")),
-			"reason": str(res.get("reason", "BAD_PLAY")),
+			"accepted": false,
+			"error": GameBinding.map_reason(str(res.get("reason", "BAD_PLAY"))),
+			"reason": GameBinding.map_reason(str(res.get("reason", "BAD_PLAY"))),
 			"turn": game.current_player(),
 		}
-	return {
+	var reply := {
 		"ok": true, "m": "shuffle_rack", "code": str(room["code"]),
 		"kind": "shuffle", "reason": "OK",
 		"rack": res.get("rack", []),
 		"turn": game.current_player(), "scores": game.scores(),
 	}
+	return GameBinding.personalize(reply, me, game.rack_letters(me))
+
+
+# Caller-only rack dump: the reply carries just this seat's letters and
+# is never broadcast, so racks stay private to their owners.
+func get_rack(code: String, token: String) -> Dictionary:
+	var room := _get_room(code)
+	if room.is_empty():
+		return _gate_error("get_rack", "NO_ROOM")
+	if _seat_by_token(room, token).is_empty():
+		return _gate_error("get_rack", "NO_TOKEN")
+	if not bool(room.get("started", false)) or room.get("game") == null:
+		return _gate_error("get_rack", "BAD_STATE")
+	var game: LocalGame = room["game"]
+	var me := _seat_no(room, token)
+	return {
+		"ok": true, "m": "get_rack", "code": str(room["code"]),
+		"seat": me, "you": me,
+		"rack": game.rack_letters(me),
+		"turn": game.current_player(), "scores": game.scores(),
+		"over": game.is_over(), "ending": game.ending(),
+	}
+
+
+# Test-only hooks: rooms created with options.test_mode accept host-driven
+# rack/bag pins so scenarios can force legal, illegal, and privacy cases.
+# Any other room (or a non-host caller) is refused without touching state.
+func debug_set_rack(code: String, token: String, seat: int, tiles: Array) -> Dictionary:
+	var room := _get_room(code)
+	if room.is_empty():
+		return _gate_error("debug_set_rack", "NO_ROOM")
+	if _seat_by_token(room, token).is_empty():
+		return _gate_error("debug_set_rack", "NO_TOKEN")
+	if not bool(room.get("test_mode", false)):
+		return _gate_error("debug_set_rack", "BAD_STATE")
+	if not _is_host(room, token):
+		return _gate_error("debug_set_rack", "NOT_HOST")
+	if not bool(room.get("started", false)) or room.get("game") == null:
+		return _gate_error("debug_set_rack", "BAD_STATE")
+	var game: LocalGame = room["game"]
+	if seat < 0 or seat >= game.player_count():
+		return _gate_error("debug_set_rack", "BAD_STATE")
+	game.debug_set_rack(seat, tiles)
+	return {
+		"ok": true, "m": "debug_set_rack", "code": str(room["code"]),
+		"seat": seat, "rack": game.rack_letters(seat),
+	}
+
+
+func debug_set_bag(code: String, token: String, tiles: Array) -> Dictionary:
+	var room := _get_room(code)
+	if room.is_empty():
+		return _gate_error("debug_set_bag", "NO_ROOM")
+	if _seat_by_token(room, token).is_empty():
+		return _gate_error("debug_set_bag", "NO_TOKEN")
+	if not bool(room.get("test_mode", false)):
+		return _gate_error("debug_set_bag", "BAD_STATE")
+	if not _is_host(room, token):
+		return _gate_error("debug_set_bag", "NOT_HOST")
+	if not bool(room.get("started", false)) or room.get("game") == null:
+		return _gate_error("debug_set_bag", "BAD_STATE")
+	var game: LocalGame = room["game"]
+	game.debug_set_bag(tiles)
+	return {
+		"ok": true, "m": "debug_set_bag", "code": str(room["code"]),
+		"bag_remaining": game.bag_remaining(),
+	}
+
+
+# Seat helpers for per-recipient fan-out: -1 (or []) when unknown.
+func seat_of_token(code: String, token: String) -> int:
+	var room := _get_room(code)
+	if room.is_empty():
+		return -1
+	return _seat_no(room, token)
+
+
+func rack_for_seat(code: String, seat: int) -> Array:
+	var room := _get_room(code)
+	if room.is_empty() or room.get("game", null) == null:
+		return []
+	if not bool(room.get("started", false)):
+		return []
+	var game: LocalGame = room["game"]
+	if seat < 0 or seat >= game.player_count():
+		return []
+	return game.rack_letters(seat)
+
+
+# Test hook: force this room's deadline to expire on the next poll.
+func debug_expire(code: String) -> bool:
+	var room := _get_room(code)
+	if room.is_empty():
+		return false
+	room["deadline_ms"] = 0
+	return true
+
+
+# Clock sweep: one shared broadcast frame per expired started non-over
+# room. Auto-pass runs facade recall() then pass_turn() (never the state
+# machine directly, so _events/delta bookkeeping stays consistent),
+# refreshes the deadline, and counts like any manual scoreless turn.
+func poll_timers(now_ms: int) -> Array:
+	var out: Array = []
+	for key in _rooms.keys():
+		var room = _rooms[key]
+		if not (room is Dictionary):
+			continue
+		if not bool((room as Dictionary).get("started", false)):
+			continue
+		if (room as Dictionary).get("game", null) == null:
+			continue
+		var game: LocalGame = (room as Dictionary)["game"]
+		if game.is_over():
+			continue
+		if not GameBinding.is_expired(room as Dictionary, int(now_ms)):
+			continue
+		game.recall()
+		game.pass_turn()
+		GameBinding.refresh_deadline(room as Dictionary, int(now_ms))
+		var frame: Dictionary = game.state_delta()
+		frame["code"] = str((room as Dictionary).get("code", key))
+		frame["auto_pass"] = true
+		out.append(frame)
+	return out
 
 
 func chat(code: String, token: String, text: String) -> Dictionary:
@@ -372,7 +532,7 @@ func _say(kind: String, code: String, token: String, text: String) -> Dictionary
 	var seat := _seat_by_token(room, token)
 	if seat.is_empty():
 		return _gate_error(kind, "NO_TOKEN")
-	var msg := text.strip_edges()
+	var msg := GameBinding.clean_text(text)
 	if msg == "":
 		return _gate_error(kind, "BAD_TEXT")
 	var frame := {
@@ -415,6 +575,9 @@ func handle_dict(req: Dictionary) -> Array:
 			var opts := {}
 			if req.get("options", null) is Dictionary:
 				opts = (req.get("options") as Dictionary).duplicate(true)
+			for k in ["timer_on", "timer_off", "test_mode"] + GameBinding.TURN_SECS_ALIASES:
+				if req.has(k) and not (opts as Dictionary).has(k):
+					opts[k] = req[k]
 			var reply := create_room(who, opts)
 			reply["m"] = m_raw
 			var frames: Array = [reply]
@@ -539,6 +702,31 @@ func handle_dict(req: Dictionary) -> Array:
 			if not bool(reply.get("ok", false)):
 				return [reply]
 			return [reply, _state_sync(str(reply.get("code", "")))]
+		"get_rack", "rack":
+			var reply := get_rack(
+				_str_field(req, ["code", "room", "room_code"], ""),
+				_str_field(req, ["token", "session", "session_token"], "")
+			)
+			reply["m"] = m_raw
+			return [reply]
+		"debug_set_rack":
+			var arg = req.get("tiles", req.get("rack", req.get("letters", [])))
+			var reply := debug_set_rack(
+				_str_field(req, ["code", "room", "room_code"], ""),
+				_str_field(req, ["token", "session", "session_token"], ""),
+				_opt_seat(req), _parse_tiles_arg(arg)
+			)
+			reply["m"] = m_raw
+			return [reply]
+		"debug_set_bag":
+			var argb = req.get("tiles", req.get("bag", req.get("letters", [])))
+			var reply := debug_set_bag(
+				_str_field(req, ["code", "room", "room_code"], ""),
+				_str_field(req, ["token", "session", "session_token"], ""),
+				_parse_tiles_arg(argb)
+			)
+			reply["m"] = m_raw
+			return [reply]
 		"chat", "emote":
 			var reply: Dictionary
 			if ml == "chat":
@@ -568,8 +756,87 @@ func handle_dict(req: Dictionary) -> Array:
 	return [_gate_error(m_raw, "UNKNOWN_MESSAGE")]
 
 
+func _clock_ms() -> int:
+	return int(Time.get_ticks_msec())
+
+
+func _seat_no(room: Dictionary, token: String) -> int:
+	var seat := _seat_by_token(room, token)
+	if seat.is_empty():
+		return -1
+	return int(seat.get("seat", -1))
+
+
+# Turn-authority reject: every gated intent carries accepted:false so
+# probes can assert on one flat shape; place rejects also carry the
+# points/total/reason_word fields of gameplay rejects.
+func _turn_error(m: String, room: Dictionary, seat: int) -> Dictionary:
+	var game: LocalGame = room["game"]
+	var frame := {
+		"m": m, "ok": false,
+		"error": GameBinding.NOT_YOUR_TURN, "reason": GameBinding.NOT_YOUR_TURN,
+		"accepted": false,
+		"turn": game.current_player(), "scores": game.scores(),
+		"over": game.is_over(), "ending": game.ending(),
+	}
+	if m == "place_tiles" or m == "place":
+		frame["kind"] = "reject"
+		frame["points"] = 0
+		frame["total"] = 0
+		frame["reason_word"] = ""
+	return frame
+
+
 func _gate_error(m: String, code: String) -> Dictionary:
 	return {"m": m, "ok": false, "error": code, "reason": code}
+
+
+# Seat-number parsing for wire input: JSON numbers arrive as floats, so
+# numeric values convert directly; strings must be valid ints. Anything
+# else (missing, blank, garbage) yields -1 and the caller refuses it.
+static func _opt_seat(req: Dictionary) -> int:
+	for k in ["seat", "player", "player_id", "you", "bot_seat"]:
+		if not req.has(k) or req.get(k) == null:
+			continue
+		var v = req.get(k)
+		if v is bool:
+			continue
+		if v is int or v is float:
+			return int(v)
+		var s := str(v).strip_edges()
+		if s == "":
+			continue
+		if s.is_valid_int():
+			return int(s)
+		return -1
+	return -1
+
+
+# Debug tile-arg normalization: a bare String is one tile per character
+# ("CATDEFG"; "_", "?", ".", "*" mean blank), an Array is one tile
+# per element; anything else yields [].
+static func _parse_tiles_arg(raw) -> Array:
+	var out: Array = []
+	if raw is String:
+		var s := str(raw)
+		for i: int in range(s.length()):
+			var ch := s.substr(i, 1).strip_edges().to_upper()
+			if ch == "" or ch == "," or ch == ";" or ch == "|" or ch == " ":
+				continue
+			if ch == "_" or ch == "?" or ch == "." or ch == "*":
+				out.append("")
+			else:
+				out.append(ch)
+		return out
+	if raw is Array:
+		for t in (raw as Array):
+			if t is Dictionary:
+				var d := t as Dictionary
+				out.append(str(d.get("letter", d.get("face", ""))).strip_edges().to_upper())
+			else:
+				out.append(str(t).strip_edges().to_upper())
+		return out
+	return out
 
 
 func _norm_code(raw) -> String:
