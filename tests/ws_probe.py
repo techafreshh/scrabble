@@ -14,6 +14,7 @@ Usage:
     python3 tests/ws_probe.py --pass-turn --code C --token T
     python3 tests/ws_probe.py --chat TEXT --code C --token T
     python3 tests/ws_probe.py --rpc '{"v":1,"m":"chat",...}' [--code C --token T]
+    python3 tests/ws_probe.py --smoke
 
 Any action accepts repeatable `--expect k=v`, asserted against the flat
 keys of the reply object (`expect_fail k expected=X got=Y`, exit 1).
@@ -543,6 +544,201 @@ def do_check_private(args):
     return 0
 
 
+def _smoke_rpc(url, timeout, payload):
+    """One fresh socket per RPC: send one JSON object, return the reply."""
+    sock = open_socket(url, timeout)
+    try:
+        send_masked_text(sock, json.dumps(payload, separators=(",", ":")))
+        while True:
+            opcode, raw = read_frame(sock)
+            if opcode == 0x8:
+                return None
+            if opcode != 0x1:
+                continue
+            try:
+                text = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                return None
+            try:
+                return json.loads(text)
+            except ValueError:
+                return None
+    finally:
+        sock.close()
+
+
+def _norm_smoke_tiles(tiles):
+    norm = []
+    if isinstance(tiles, list):
+        for tile in tiles:
+            if isinstance(tile, dict):
+                norm.append((str(tile.get("square", "")),
+                             str(tile.get("letter", ""))))
+    return sorted(norm)
+
+
+def _smoke_finish(illegal, resync_ok, gameover_ok):
+    print("smoke_game_over=%s" % ("true" if gameover_ok else "false"))
+    print("smoke_resync=%s" % ("true" if resync_ok else "false"))
+    print("illegal_states=%d" % illegal)
+    if resync_ok and gameover_ok and illegal == 0:
+        return 0
+    return 1
+
+
+def do_smoke(args):
+    """Full legit game over one stateless socket at a time.
+
+    Mirrors tests/net_smoke.gd: test-mode room, CAT opening, forced drop
+    of the guest with token rejoin, CATS extension, then six alternating
+    passes to the six_scoreless game_over. Every assertion uses only the
+    direct RPC reply on a fresh socket, so no broadcast drain is needed.
+    """
+    illegal = 0
+    resync_ok = False
+    gameover_ok = False
+    resync_ms = -1
+
+    def note(reason):
+        nonlocal illegal
+        illegal += 1
+        print("smoke_note=%s" % reason)
+
+    def rpc(payload):
+        try:
+            return _smoke_rpc(args.url, args.timeout, payload)
+        except (OSError, IOError) as exc:
+            note("rpc_error_%s" % payload.get("m", "?"))
+            print("smoke_error=%s" % exc)
+            return None
+
+    def ok_reply(reply):
+        return isinstance(reply, dict) and reply.get("ok", False) is True
+
+    created = rpc({"v": 1, "m": "create_room", "name": "SmokeA",
+                   "test_mode": True, "timer_on": False,
+                   "options": {"test_mode": True, "timer_on": False}})
+    if not ok_reply(created):
+        note("create_room")
+        return _smoke_finish(illegal, resync_ok, gameover_ok)
+    code = created.get("code", "")
+    tok_a = created.get("token", "")
+    if not code or not tok_a or created.get("seat", -1) != 0:
+        note("create_identity")
+        return _smoke_finish(illegal, resync_ok, gameover_ok)
+    joined = rpc({"v": 1, "m": "join_room", "code": code,
+                  "name": "SmokeB"})
+    if not ok_reply(joined):
+        note("join_room")
+        return _smoke_finish(illegal, resync_ok, gameover_ok)
+    tok_b = joined.get("token", "")
+    if not tok_b or joined.get("seat", joined.get("you", -1)) != 1:
+        note("join_identity")
+        return _smoke_finish(illegal, resync_ok, gameover_ok)
+    if joined.get("seats", 0) != 2:
+        note("join_seats")
+        return _smoke_finish(illegal, resync_ok, gameover_ok)
+    started = rpc({"v": 1, "m": "start_game", "code": code,
+                   "token": tok_a})
+    if not ok_reply(started) or started.get("started", False) is not True:
+        note("start_game")
+        return _smoke_finish(illegal, resync_ok, gameover_ok)
+    pin0 = rpc({"v": 1, "m": "debug_set_rack", "code": code,
+                "token": tok_a, "seat": 0,
+                "tiles": ["C", "A", "T", "D", "E", "F", "G"]})
+    if not ok_reply(pin0) or pin0.get("seat", -1) != 0:
+        note("pin_seat0")
+        return _smoke_finish(illegal, resync_ok, gameover_ok)
+    pin1 = rpc({"v": 1, "m": "debug_set_rack", "code": code,
+                "token": tok_a, "seat": 1,
+                "tiles": ["S", "H", "I", "J", "K", "L", "M"]})
+    if not ok_reply(pin1) or pin1.get("seat", -1) != 1:
+        note("pin_seat1")
+        return _smoke_finish(illegal, resync_ok, gameover_ok)
+    cat = rpc({"v": 1, "m": "place_tiles", "code": code,
+               "token": tok_a,
+               "tiles": [{"square": "8G", "letter": "C"},
+                         {"square": "8H", "letter": "A"},
+                         {"square": "8I", "letter": "T"}]})
+    if not ok_reply(cat) or cat.get("accepted", False) is not True:
+        note("cat_not_accepted")
+        return _smoke_finish(illegal, resync_ok, gameover_ok)
+    snap = rpc({"v": 1, "m": "rejoin", "code": code, "token": tok_b})
+    if not ok_reply(snap):
+        note("snapshot_rejoin")
+        return _smoke_finish(illegal, resync_ok, gameover_ok)
+    if len(snap.get("board_tiles", []) or []) != 3:
+        note("snapshot_tiles_not_3")
+        return _smoke_finish(illegal, resync_ok, gameover_ok)
+    snap_rack = snap.get("rack", [])
+    snap_scores = snap.get("scores", [])
+    snap_tiles = _norm_smoke_tiles(snap.get("board_tiles", []))
+    try:
+        drop = open_socket(args.url, args.timeout)
+        try:
+            send_masked_text(drop, json.dumps(
+                {"v": 1, "m": "get_rack", "code": code,
+                 "token": tok_b}, separators=(",", ":")))
+            read_frame(drop)
+        finally:
+            drop.close()
+    except (OSError, IOError, ValueError) as exc:
+        note("drop_probe")
+        print("smoke_error=%s" % exc)
+        return _smoke_finish(illegal, resync_ok, gameover_ok)
+    begin = time.monotonic()
+    again = rpc({"v": 1, "m": "rejoin", "code": code,
+                 "token": tok_b})
+    resync_ms = int((time.monotonic() - begin) * 1000)
+    print("smoke_resync_ms=%d" % resync_ms)
+    if not ok_reply(again):
+        note("rejoin")
+        return _smoke_finish(illegal, resync_ok, gameover_ok)
+    same = (again.get("seat", again.get("you", -9)) == 1
+            and again.get("rack", []) == snap_rack
+            and again.get("scores", []) == snap_scores
+            and _norm_smoke_tiles(again.get("board_tiles", [])) == snap_tiles)
+    if resync_ms >= 3000:
+        note("resync_too_slow")
+        return _smoke_finish(illegal, resync_ok, gameover_ok)
+    if not same:
+        note("resync_snapshot_mismatch")
+        return _smoke_finish(illegal, resync_ok, gameover_ok)
+    resync_ok = True
+    print("smoke_resync=true")
+    cats = rpc({"v": 1, "m": "place_tiles", "code": code,
+                "token": tok_b,
+                "tiles": [{"square": "8J", "letter": "S"}]})
+    if not ok_reply(cats) or cats.get("accepted", False) is not True:
+        note("cats_not_accepted")
+        return _smoke_finish(illegal, resync_ok, gameover_ok)
+    final = None
+    for i in range(6):
+        tok = tok_a if i % 2 == 0 else tok_b
+        passed = rpc({"v": 1, "m": "pass", "code": code, "token": tok})
+        if not ok_reply(passed):
+            note("pass_%d_reply" % i)
+            return _smoke_finish(illegal, resync_ok, gameover_ok)
+        if passed.get("accepted", False) is not True:
+            note("pass_%d_not_accepted" % i)
+            return _smoke_finish(illegal, resync_ok, gameover_ok)
+        final = passed
+    if not isinstance(final, dict) or final.get("over", False) is not True:
+        note("game_never_over")
+        return _smoke_finish(illegal, resync_ok, gameover_ok)
+    if final.get("ending", "") != "six_scoreless":
+        note("ending_not_six_scoreless")
+        return _smoke_finish(illegal, resync_ok, gameover_ok)
+    delta = final.get("delta", {})
+    history = delta.get("history", []) if isinstance(delta, dict) else []
+    if not isinstance(history, list) or len(history) < 2:
+        note("history_too_short")
+        return _smoke_finish(illegal, resync_ok, gameover_ok)
+    gameover_ok = True
+    print("smoke_game_over=true")
+    return _smoke_finish(illegal, resync_ok, gameover_ok)
+
+
 def do_generic_rpc(args):
     try:
         payload = json.loads(args.rpc)
@@ -623,6 +819,9 @@ def main(argv=None):
                         help="with --create: allow host debug pin RPCs")
     parser.add_argument("--rpc", default=None, metavar="JSON",
                         help="send a raw JSON object frame")
+    parser.add_argument("--smoke", action="store_true",
+                        help="run the 2-client forced-drop full-game smoke "
+                        "(prints smoke_game_over/smoke_resync/illegal_states)")
     parser.add_argument("--expect", action="append", default=[],
                         metavar="k=v",
                         help="assert a flat reply key (repeatable)")
@@ -636,6 +835,8 @@ def main(argv=None):
 
     if args.ping:
         return run_ping(args.url, args.timeout)
+    if args.smoke:
+        return do_smoke(args)
     if args.create:
         return do_create(args)
     join_value = None
