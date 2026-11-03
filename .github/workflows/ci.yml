@@ -52,6 +52,24 @@ jobs:
             sleep 1
           done
           python3 tests/ws_probe.py --ping
+          CREATE_OUT=$(python3 tests/ws_probe.py --create --name Host)
+          echo "$CREATE_OUT"
+          echo "$CREATE_OUT" | grep -q "^code="
+          echo "$CREATE_OUT" | grep -q "^token="
+          CODE=$(echo "$CREATE_OUT" | sed -n 's/^code=//p' | tr -d '\r\n ')
+          TOKEN=$(echo "$CREATE_OUT" | sed -n 's/^token=//p' | tr -d '\r\n ')
+          test -n "$CODE"
+          test -n "$TOKEN"
+          JOIN_OUT=$(python3 tests/ws_probe.py --join "$CODE" --name Guest)
+          echo "$JOIN_OUT"
+          echo "$JOIN_OUT" | grep -q "seats=2"
+          BAD_OUT=$(python3 tests/ws_probe.py --join ZZZZ --name X 2>&1 || true)
+          echo "$BAD_OUT"
+          echo "$BAD_OUT" | grep -q "error=NO_ROOM"
+          if python3 tests/ws_probe.py --join ZZZZ --name X; then
+            echo "bad-code join unexpectedly succeeded"
+            exit 1
+          fi
 
       - name: Dump server log on failure
         if: failure()
