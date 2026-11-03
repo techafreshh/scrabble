@@ -33,6 +33,10 @@ func _initialize() -> void:
 		if call("test_game_state_suite") != true:
 			failed += 1
 			push_error("FAIL test_game_state_suite: did not finish (runtime error?)")
+	elif suite == "strip_chat":
+		if call("test_strip_chat_suite") != true:
+			failed += 1
+			push_error("FAIL test_strip_chat_suite: did not finish (runtime error?)")
 	elif suite == "dictionary":
 		for t: String in [
 			"test_dictionary_load",
@@ -58,6 +62,7 @@ func _initialize() -> void:
 			"test_dictionary_pluggable_path",
 			"test_rules_suite",
 			"test_game_state_suite",
+			"test_strip_chat_suite",
 		]:
 			if call(t) != true:
 				failed += 1
@@ -138,6 +143,8 @@ func _get_suite_filter() -> String:
 			return "rules"
 		if arg == "game_state":
 			return "game_state"
+		if arg == "strip_chat":
+			return "strip_chat"
 	return ""
 
 
@@ -225,4 +232,10 @@ func test_rules_suite() -> bool:
 func test_game_state_suite() -> bool:
 	var game_state_tests: GDScript = load("res://tests/test_game_state.gd")
 	game_state_tests.run_all(self)
+	return true
+
+
+func test_strip_chat_suite() -> bool:
+	var strip_chat_tests: GDScript = load("res://tests/test_strip_chat.gd")
+	strip_chat_tests.run_all(self)
 	return true
