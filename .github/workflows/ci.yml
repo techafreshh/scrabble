@@ -70,6 +70,50 @@ jobs:
             echo "bad-code join unexpectedly succeeded"
             exit 1
           fi
+          # Server-game binding: private racks, authoritative intents, timers.
+          TROOM_OUT=$(python3 tests/ws_probe.py --create --test-mode --name Host)
+          echo "$TROOM_OUT"
+          TCODE=$(echo "$TROOM_OUT" | sed -n 's/^code=//p' | tr -d '\r\n ')
+          TTOKEN=$(echo "$TROOM_OUT" | sed -n 's/^token=//p' | tr -d '\r\n ')
+          test -n "$TCODE"
+          test -n "$TTOKEN"
+          TJOIN_OUT=$(python3 tests/ws_probe.py --join "$TCODE" --name Guest)
+          echo "$TJOIN_OUT"
+          GTOKEN=$(echo "$TJOIN_OUT" | sed -n 's/^token=//p' | tr -d '\r\n ')
+          test -n "$GTOKEN"
+          python3 tests/ws_probe.py --start --code "$TCODE" --token "$TTOKEN" | grep -q "started=true"
+          python3 tests/ws_probe.py --debug-rack "0:ZZQJXEF" --code "$TCODE" --token "$TTOKEN" | grep -q "rack=ZZQJXEF"
+          python3 tests/ws_probe.py --debug-rack "1:CATDEFG" --code "$TCODE" --token "$TTOKEN" | grep -q "rack=CATDEFG"
+          PRIV_OUT=$(python3 tests/ws_probe.py --check-private "$TCODE" "$TTOKEN" "$GTOKEN")
+          echo "$PRIV_OUT"
+          echo "$PRIV_OUT" | grep -q "racks_private=true"
+          if BAD_OUT=$(python3 tests/ws_probe.py --place-tiles --code "$TCODE" --token "$TTOKEN" --tiles '[{"square":"F8","letter":"Z"},{"square":"G8","letter":"Z"},{"square":"H8","letter":"Q"},{"square":"I8","letter":"J"},{"square":"J8","letter":"X"}]' 2>&1); then
+            echo "illegal word unexpectedly accepted"
+            exit 1
+          fi
+          echo "$BAD_OUT"
+          echo "$BAD_OUT" | grep -q "accepted=false"
+          echo "$BAD_OUT" | grep -q "reason=NOT_IN_LEXICON"
+          python3 tests/ws_probe.py --rpc "{\"v\":1,\"m\":\"recall\",\"code\":\"$TCODE\",\"token\":\"$TTOKEN\"}" | grep -q "ok=true"
+          python3 tests/ws_probe.py --debug-rack "0:CATDEFG" --code "$TCODE" --token "$TTOKEN" >/dev/null
+          CAT_OUT=$(python3 tests/ws_probe.py --place-tiles --code "$TCODE" --token "$TTOKEN" --tiles '[{"square":"G8","letter":"C"},{"square":"H8","letter":"A"},{"square":"I8","letter":"T"}]')
+          echo "$CAT_OUT"
+          echo "$CAT_OUT" | grep -q "accepted=true"
+          echo "$CAT_OUT" | grep -q "points="
+          LONG=$(python3 -c "print('q'*250)")
+          CHAT_OUT=$(python3 tests/ws_probe.py --rpc "{\"v\":1,\"m\":\"chat\",\"code\":\"$TCODE\",\"token\":\"$TTOKEN\",\"text\":\"$LONG\"}")
+          echo "$CHAT_OUT" | grep -q "chat_ok=true"
+          echo "$CHAT_OUT" | python3 -c "import sys,json; d=json.loads([l for l in sys.stdin.read().splitlines() if l.startswith('json=')][0][5:]); assert len(d['text'])==200, len(d['text']); print('chat_len=200')"
+          SROOM_OUT=$(python3 tests/ws_probe.py --create --test-mode --turn-secs 1 --name Host)
+          SCODE=$(echo "$SROOM_OUT" | sed -n 's/^code=//p' | tr -d '\r\n ')
+          STOKEN=$(echo "$SROOM_OUT" | sed -n 's/^token=//p' | tr -d '\r\n ')
+          SJOIN_OUT=$(python3 tests/ws_probe.py --join "$SCODE" --name Guest)
+          SGTOKEN=$(echo "$SJOIN_OUT" | sed -n 's/^token=//p' | tr -d '\r\n ')
+          test -n "$SGTOKEN"
+          python3 tests/ws_probe.py --start --code "$SCODE" --token "$STOKEN" | grep -q "started=true"
+          LISTEN_OUT=$(python3 tests/ws_probe.py --listen 4 --code "$SCODE" --token "$SGTOKEN")
+          echo "$LISTEN_OUT"
+          echo "$LISTEN_OUT" | grep -q "auto_pass=true"
 
       - name: Dump server log on failure
         if: failure()
