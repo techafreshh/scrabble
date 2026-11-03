@@ -1,0 +1,70 @@
+[gd_resource type="Theme" load_steps=6 format=3]
+
+[sub_resource type="SystemFont" id="SystemFont_warmclub"]
+font_names = PackedStringArray("sans-serif")
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_panel_felt"]
+bg_color = Color(0.113725, 0.360784, 0.247059, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.788235, 0.635294, 0.152941, 1)
+corner_radius_top_left = 12
+corner_radius_top_right = 12
+corner_radius_bottom_right = 12
+corner_radius_bottom_left = 12
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_tile_ivory"]
+bg_color = Color(0.952941, 0.917647, 0.827451, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.290196, 0.184314, 0.113725, 1)
+corner_radius_top_left = 8
+corner_radius_top_right = 8
+corner_radius_bottom_right = 8
+corner_radius_bottom_left = 8
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_button_wood"]
+bg_color = Color(0.290196, 0.184314, 0.113725, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.788235, 0.635294, 0.152941, 1)
+corner_radius_top_left = 8
+corner_radius_top_right = 8
+corner_radius_bottom_right = 8
+corner_radius_bottom_left = 8
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_button_wood_hover"]
+bg_color = Color(0.364706, 0.239216, 0.152941, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.788235, 0.635294, 0.152941, 1)
+corner_radius_top_left = 8
+corner_radius_top_right = 8
+corner_radius_bottom_right = 8
+corner_radius_bottom_left = 8
+
+[resource]
+default_font = SubResource("SystemFont_warmclub")
+default_font_size = 16
+Button/colors/font_color = Color(0.952941, 0.917647, 0.827451, 1)
+Button/font_sizes/font_size = 16
+Button/styles/hover = SubResource("StyleBoxFlat_button_wood_hover")
+Button/styles/normal = SubResource("StyleBoxFlat_button_wood")
+Button/styles/pressed = SubResource("StyleBoxFlat_button_wood")
+Label/colors/font_color = Color(0.952941, 0.917647, 0.827451, 1)
+PanelContainer/styles/panel = SubResource("StyleBoxFlat_panel_felt")
+WarmClub/colors/brass = Color(0.788235, 0.635294, 0.152941, 1)
+WarmClub/colors/felt = Color(0.113725, 0.360784, 0.247059, 1)
+WarmClub/colors/ivory = Color(0.952941, 0.917647, 0.827451, 1)
+WarmClub/colors/wood = Color(0.290196, 0.184314, 0.113725, 1)
+WarmClub/styles/button_wood = SubResource("StyleBoxFlat_button_wood")
+WarmClub/styles/panel_felt = SubResource("StyleBoxFlat_panel_felt")
+WarmClub/styles/tile_ivory = SubResource("StyleBoxFlat_tile_ivory")
