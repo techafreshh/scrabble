@@ -269,6 +269,20 @@ func shuffle() -> Dictionary:
 	}
 
 
+# Full board snapshot in row-major order: one {square, letter} dict per
+# non-empty cell (square in wire notation, e.g. "8H"). Feeds the rejoin
+# resync reply and the live turn broadcasts so a returning seat can
+# compare rack/scores/board identically.
+func board_tiles() -> Array:
+	var out: Array = []
+	for row in range(ScrabbleBoard.SIZE):
+		for col in range(ScrabbleBoard.SIZE):
+			var face := board.tile_at(col, row)
+			if face != "":
+				out.append({"square": ScrabbleBoard.cell_to_square(col, row), "letter": face})
+	return out
+
+
 # PRD-§10-abridged event: turn_update while playing (with the last commit
 # or {}), game_over with full history once the machine ends the game.
 func state_delta() -> Dictionary:

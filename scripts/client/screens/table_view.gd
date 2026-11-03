@@ -48,6 +48,7 @@ func _ready() -> void:
 func _ensure_built() -> void:
 	if _built:
 		return
+	_maybe_mount_reconnect_overlay()
 	var board := _find_board()
 	var rack := _find_rack()
 	var play_btn := get_node_or_null("%PlayButton") as Button
@@ -197,6 +198,29 @@ func pass_turn() -> Dictionary:
 	_maybe_finish()
 	_refresh_chrome()
 	return res
+
+
+# Mounts the reconnect overlay as a hidden top-level child and binds it to
+# the Net autoload. Guarded by resource/node lookups so offline hot-seat
+# (or a headless tree without Net) never shows it and never raises.
+func _maybe_mount_reconnect_overlay() -> void:
+	if get_node_or_null("ReconnectOverlay") != null:
+		return
+	if not ResourceLoader.exists("res://scenes/reconnect_overlay.tscn"):
+		return
+	var packed := load("res://scenes/reconnect_overlay.tscn") as PackedScene
+	if packed == null:
+		return
+	var overlay := packed.instantiate()
+	overlay.name = "ReconnectOverlay"
+	add_child(overlay)
+	var net := get_node_or_null("/root/Net")
+	if net == null:
+		return
+	if overlay.has_method("bind_net"):
+		overlay.call("bind_net", net)
+	if net.has_method("bind_overlay"):
+		net.call("bind_overlay", overlay)
 
 
 # Mirrors the current seat's rack into the staging controller so tap-tap

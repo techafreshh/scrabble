@@ -439,6 +439,36 @@ def do_debug_bag(args, code):
     return run_rpc_action(args.url, args.timeout, payload, args.expect, on_ok)
 
 
+def do_rejoin(args, code):
+    payload = {"v": 1, "m": "rejoin", "code": code,
+               "token": args.token or ""}
+    start = time.monotonic()
+    try:
+        messages = rpc_exchange(args.url, args.timeout, payload)
+    except (OSError, IOError) as exc:
+        return _fail("request failed: %s" % exc)
+    if not messages or not isinstance(messages[0], dict):
+        return _fail("empty reply from server")
+    reply = messages[0]
+    if not reply.get("ok", False):
+        for line in _flat_lines(reply):
+            print(line)
+        print("error=%s" % reply.get("error", reply.get("reason", "UNKNOWN")))
+        return 1
+    ms = int((time.monotonic() - start) * 1000)
+    for line in _flat_lines(reply):
+        print(line)
+    print("rack=%s" % _rack_str(reply.get("rack", "")))
+    scores = reply.get("scores", [])
+    if isinstance(scores, list):
+        print("scores=%s" % ",".join(_flat_str(x) for x in scores))
+    tiles = reply.get("board_tiles", [])
+    print("board_tiles=%d" % (len(tiles) if isinstance(tiles, list) else -1))
+    print("resync_ms=%d" % ms)
+    emit_extra(messages)
+    return check_expects(reply, args.expect)
+
+
 def do_listen(args, code):
     try:
         secs = float(args.listen)
@@ -569,6 +599,9 @@ def main(argv=None):
                         help="tiles array for --place-tiles")
     parser.add_argument("--rack-dump", action="store_true",
                         help="print this seat's private rack (needs --code/--token)")
+    parser.add_argument("--rejoin", action="store_true",
+                        help="rejoin with the stored token (needs --code, "
+                        "optional --token; wrong tokens print error=BAD_TOKEN)")
     parser.add_argument("--debug-rack", default=None, metavar="SEAT:TILES",
                         help="pin a seat rack on a test-mode room "
                         "(needs --code/--token)")
@@ -615,6 +648,13 @@ def main(argv=None):
                   file=sys.stderr)
             return 2
         return do_join(args, code)
+    if args.rejoin:
+        code = args.code or args.positional_code
+        if not code:
+            parser.print_usage(sys.stderr)
+            print("probe failure: --rejoin needs --code", file=sys.stderr)
+            return 2
+        return do_rejoin(args, code)
     if args.positional_code is not None and args.rpc is None \
             and not (args.add_bot or args.start or args.pass_turn
                      or args.chat is not None or args.place_tiles

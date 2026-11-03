@@ -65,6 +65,10 @@ func _initialize() -> void:
 		if call("test_net_client_suite") != true:
 			failed += 1
 			push_error("FAIL test_net_client_suite: did not finish (runtime error?)")
+	elif suite == "reconnect":
+		if call("test_reconnect_suite") != true:
+			failed += 1
+			push_error("FAIL test_reconnect_suite: did not finish (runtime error?)")
 	elif suite == "dictionary":
 		for t: String in [
 			"test_dictionary_load",
@@ -98,6 +102,7 @@ func _initialize() -> void:
 			"test_hotseat_suite",
 			"test_rooms_suite",
 			"test_net_client_suite",
+			"test_reconnect_suite",
 		]:
 			if call(t) != true:
 				failed += 1
@@ -332,4 +337,10 @@ func test_rooms_suite() -> bool:
 func test_net_client_suite() -> bool:
 	var net_client_tests: GDScript = load("res://tests/test_net_client.gd")
 	net_client_tests.run_all(self, _get_suite_filter() == "net_client")
+	return true
+
+
+func test_reconnect_suite() -> bool:
+	var reconnect_tests: GDScript = load("res://tests/test_reconnect.gd")
+	reconnect_tests.run_all(self, _get_suite_filter() == "reconnect")
 	return true

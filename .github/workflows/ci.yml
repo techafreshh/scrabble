@@ -114,6 +114,28 @@ jobs:
           LISTEN_OUT=$(python3 tests/ws_probe.py --listen 4 --code "$SCODE" --token "$SGTOKEN")
           echo "$LISTEN_OUT"
           echo "$LISTEN_OUT" | grep -q "auto_pass=true"
+          # Reconnect: strict token rejoin with a full-state resync snapshot.
+          RJROOM_OUT=$(python3 tests/ws_probe.py --create --test-mode --name Host)
+          RJCODE=$(echo "$RJROOM_OUT" | sed -n 's/^code=//p' | tr -d '\r\n ')
+          RJTOKEN=$(echo "$RJROOM_OUT" | sed -n 's/^token=//p' | tr -d '\r\n ')
+          test -n "$RJCODE"
+          test -n "$RJTOKEN"
+          python3 tests/ws_probe.py --join "$RJCODE" --name Guest >/dev/null
+          python3 tests/ws_probe.py --start --code "$RJCODE" --token "$RJTOKEN" | grep -q "started=true"
+          python3 tests/ws_probe.py --debug-rack "0:CATDEFG" --code "$RJCODE" --token "$RJTOKEN" >/dev/null
+          python3 tests/ws_probe.py --place-tiles --code "$RJCODE" --token "$RJTOKEN" --tiles '[{"square":"G8","letter":"C"},{"square":"H8","letter":"A"},{"square":"I8","letter":"T"}]' | grep -q "accepted=true"
+          RJ_OK=$(python3 tests/ws_probe.py --rejoin --code "$RJCODE" --token "$RJTOKEN")
+          echo "$RJ_OK"
+          echo "$RJ_OK" | grep -q "resync_ms="
+          echo "$RJ_OK" | grep -q "board_tiles=3"
+          echo "$RJ_OK" | grep -q "started=true"
+          RJBAD_OUT=$(python3 tests/ws_probe.py --rejoin --code "$RJCODE" --token "00000000000000000000000000000000" 2>&1 || true)
+          echo "$RJBAD_OUT"
+          echo "$RJBAD_OUT" | grep -q "error=BAD_TOKEN"
+          if python3 tests/ws_probe.py --rejoin --code "$RJCODE" --token "00000000000000000000000000000000"; then
+            echo "wrong-token rejoin unexpectedly succeeded"
+            exit 1
+          fi
 
       - name: Net client suite
         timeout-minutes: 5
@@ -134,6 +156,25 @@ jobs:
           grep -q "ui_reject=Not in my book:" /tmp/net_client.log
           grep -q "chat_relay=true" /tmp/net_client.log
 
+      - name: Reconnect suite
+        timeout-minutes: 5
+        run: |
+          set -euxo pipefail
+          godot --headless --path . > /tmp/godot_reconnect_server.log 2>&1 &
+          SERVER_PID=$!
+          cleanup() { kill "$SERVER_PID" 2>/dev/null || true; }
+          trap cleanup EXIT
+          for i in $(seq 1 30); do
+            if python3 -c "import socket; socket.create_connection(('127.0.0.1', 9080), timeout=1).close()" 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          godot --headless --path . --script res://tests/test_runner.gd --suite reconnect 2>&1 | tee /tmp/reconnect.log
+          grep -q "overlay=Reconnecting" /tmp/reconnect.log
+          grep -q "resync_identical=true" /tmp/reconnect.log
+          grep -q "error=BAD_TOKEN" /tmp/reconnect.log
+
       - name: Dump server log on failure
         if: failure()
         timeout-minutes: 5
@@ -149,4 +190,10 @@ jobs:
           fi
           if [ -f /tmp/net_client.log ]; then
             cat /tmp/net_client.log || true
+          fi
+          if [ -f /tmp/godot_reconnect_server.log ]; then
+            cat /tmp/godot_reconnect_server.log || true
+          fi
+          if [ -f /tmp/reconnect.log ]; then
+            cat /tmp/reconnect.log || true
           fi
