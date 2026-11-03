@@ -18,6 +18,7 @@ jobs:
           curl -fSL -o /tmp/godot.zip \
             "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}/${ASSET}"
           sudo unzip -o /tmp/godot.zip -d /usr/local/bin
+          sudo mv /usr/local/bin/Godot_v${GODOT_VERSION}_linux.x86_64 /usr/local/bin/godot
           sudo chmod +x /usr/local/bin/godot
           rm /tmp/godot.zip
           godot --version
