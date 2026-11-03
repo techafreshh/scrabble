@@ -204,6 +204,43 @@ static func _game_record_score_exact_tiles(runner: SceneTree) -> void:
 	runner.assert_eq(mm.score_of(0), 0, "game_exact_shortage_score_unchanged")
 	runner.assert_eq(mm.current_player(), 0, "game_exact_shortage_turn_unchanged")
 
+	# is_blank-keyed dict: same blank-aware consumption as the blank key.
+	var bi := ScrabbleGame.new(2, 10)
+	bi.debug_set_rack(0, ["", "E", "A", "B", "C", "D", "F"])
+	var ibag: Array = []
+	for i: int in range(50):
+		ibag.append("Z")
+	bi.debug_set_bag(ibag)
+	var rbi: Dictionary = bi.record_score(3, 1, [{"letter": "E", "is_blank": true}])
+	runner.assert_true(bool(rbi.get("ok", false)), "game_exact_is_blank_ok")
+	var birack: Array = bi.rack_letters(0)
+	runner.assert_true(birack.has("E"), "game_exact_is_blank_keeps_letter_e")
+	runner.assert_true(not birack.has(""), "game_exact_is_blank_consumes_blank")
+
+	# Malformed entries: a non-String/Dictionary face and an explicit
+	# non-blank empty face both reject BAD_PLAY with state untouched.
+	var mf := ScrabbleGame.new(2, 12)
+	mf.debug_set_rack(0, ["C", "A", "T", "D", "E", "F", "G"])
+	var fbag: Array = []
+	for i: int in range(40):
+		fbag.append("E")
+	mf.debug_set_bag(fbag)
+	var mf_rack: Array = mf.rack_letters(0)
+	var mf_bag: int = mf.bag_remaining()
+	var rmf: Dictionary = mf.record_score(5, 1, [42])
+	runner.assert_eq(bool(rmf.get("ok", true)), false, "game_exact_malformed_rejected")
+	runner.assert_eq(str(rmf.get("reason", "")), "BAD_PLAY", "game_exact_malformed_reason")
+	runner.assert_eq(mf.rack_letters(0), mf_rack, "game_exact_malformed_rack_unchanged")
+	runner.assert_eq(mf.bag_remaining(), mf_bag, "game_exact_malformed_bag_unchanged")
+	runner.assert_eq(mf.score_of(0), 0, "game_exact_malformed_score_unchanged")
+	runner.assert_eq(mf.current_player(), 0, "game_exact_malformed_turn_unchanged")
+	var rempty: Dictionary = mf.record_score(5, 1, [{"letter": "", "blank": false}])
+	runner.assert_eq(bool(rempty.get("ok", true)), false, "game_exact_empty_face_rejected")
+	runner.assert_eq(str(rempty.get("reason", "")), "BAD_PLAY", "game_exact_empty_face_reason")
+	runner.assert_eq(mf.rack_letters(0), mf_rack, "game_exact_empty_face_rack_unchanged")
+	runner.assert_eq(mf.score_of(0), 0, "game_exact_empty_face_score_unchanged")
+	runner.assert_eq(mf.current_player(), 0, "game_exact_empty_face_turn_unchanged")
+
 	# Legacy count path: no third argument still drops from the front.
 	var leg := ScrabbleGame.new(2, 11)
 	leg.debug_set_rack(0, ["X", "C", "A", "T", "D", "E", "F"])
