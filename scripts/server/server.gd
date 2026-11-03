@@ -9,15 +9,32 @@ const DEFAULT_PORT := 9080
 var _tcp := TCPServer.new()
 var _peers: Array[WebSocketPeer] = []
 var _port := DEFAULT_PORT
+var _rooms: RoomRegistry
+var _lexicon = null
 
 
 func _ready() -> void:
 	_port = _resolve_port()
+	_load_lexicon()
+	_rooms = RoomRegistry.new(_lexicon)
 	var err := _tcp.listen(_port)
 	if err != OK:
 		push_error("Wordtable server failed to listen on %d: %s" % [_port, err])
 		return
 	print("Wordtable server listening on %d" % _port)
+
+
+# Shared lexicon for every room's LocalGame. When the bundled file is
+# missing the server still boots with a null lexicon (word check skipped,
+# all other rules enforced) instead of refusing connections.
+func _load_lexicon() -> void:
+	var dict := WordDictionary.new()
+	var count: int = dict.load_from_path(WordDictionary.DEFAULT_PATH)
+	if count > 0:
+		_lexicon = dict
+	else:
+		_lexicon = null
+		push_error("Wordtable server running without a lexicon (word check skipped)")
 
 
 func _process(_delta: float) -> void:
@@ -68,7 +85,35 @@ func _drain(ws: WebSocketPeer) -> void:
 		var is_text := ws.was_string_packet()
 		if not is_text:
 			continue
-		if is_ping_text(packet.get_string_from_utf8()):
-			var err := ws.send_text("PONG")
-			if err != OK:
-				push_error("Wordtable server failed to send PONG: %s" % err)
+		_handle_text(ws, packet.get_string_from_utf8())
+
+
+# One JSON object per text frame, UTF-8. The bare `ping` path stays
+# byte-identical; frames starting with `{` go to the RPC dispatcher; any
+# other text is ignored. No inbound bytes may raise: parse failures get a
+# BAD_JSON reply and the connection stays open.
+func _handle_text(ws: WebSocketPeer, text: String) -> void:
+	if is_ping_text(text):
+		var ping_err := ws.send_text("PONG")
+		if ping_err != OK:
+			push_error("Wordtable server failed to send PONG: %s" % ping_err)
+		return
+	if not text.strip_edges().begins_with("{"):
+		return
+	var parsed = JSON.parse_string(text)
+	if not (parsed is Dictionary):
+		_send_dict(ws, {"m": "error", "ok": false, "error": "BAD_JSON", "reason": "BAD_JSON"})
+		return
+	if _rooms == null:
+		_send_dict(ws, {"m": "error", "ok": false, "error": "BAD_STATE", "reason": "BAD_STATE"})
+		return
+	var frames: Array = _rooms.handle_dict(parsed as Dictionary)
+	for frame in frames:
+		if frame is Dictionary:
+			_send_dict(ws, frame)
+
+
+func _send_dict(ws: WebSocketPeer, reply: Dictionary) -> void:
+	var err := ws.send_text(JSON.stringify(reply))
+	if err != OK:
+		push_error("Wordtable server failed to send JSON reply: %s" % err)

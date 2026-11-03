@@ -1,16 +1,30 @@
 #!/usr/bin/env python3
-"""Wordtable dev-server probe (walking skeleton, stdlib only).
+"""Wordtable dev-server probe (stdlib only).
 
-Performs an RFC 6455 WebSocket handshake against the headless server, sends a
-masked text frame `ping`, and expects a text frame `PONG`.
+Performs an RFC 6455 WebSocket handshake against the headless server and
+speaks the versioned JSON RPC surface from docs/protocol.md: one JSON
+object per text frame, every client frame carrying `v: 1` and `m: <method>`.
 
 Usage:
-    python3 tests/ws_probe.py --ping [--url ws://localhost:9080] [--timeout 5]
+    python3 tests/ws_probe.py --ping [--url ws://localhost:9080]
+    python3 tests/ws_probe.py --create [--name Host]
+    python3 tests/ws_probe.py --join CODE [--name Guest] [--token T]
+    python3 tests/ws_probe.py --add-bot --code C --token T
+    python3 tests/ws_probe.py --start --code C --token T
+    python3 tests/ws_probe.py --pass-turn --code C --token T
+    python3 tests/ws_probe.py --chat TEXT --code C --token T
+    python3 tests/ws_probe.py --rpc '{"v":1,"m":"chat",...}' [--code C --token T]
+
+Any action accepts repeatable `--expect k=v`, asserted against the flat
+keys of the reply object (`expect_fail k expected=X got=Y`, exit 1).
+`--join` also accepts `--code CODE` or a bare positional code; error
+replies print exactly `error=<REASON>` with exit 1.
 """
 
 import argparse
 import base64
 import hashlib
+import json
 import os
 import socket
 import struct
@@ -78,12 +92,16 @@ def do_handshake(sock, host, port, path, key):
 
 def send_masked_text(sock, text):
     payload = text.encode("utf-8")
-    if len(payload) > 125:
-        raise ValueError("payload too large for skeleton probe")
     mask = os.urandom(4)
-    header = struct.pack("!BB", 0x81, 0x80 | len(payload)) + mask
+    count = len(payload)
+    if count <= 125:
+        header = struct.pack("!BB", 0x81, 0x80 | count)
+    elif count <= 65535:
+        header = struct.pack("!BBH", 0x81, 0x80 | 126, count)
+    else:
+        header = struct.pack("!BBQ", 0x81, 0x80 | 127, count)
     masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
-    sock.sendall(header + masked)
+    sock.sendall(header + mask + masked)
 
 
 def read_frame(sock):
@@ -103,24 +121,97 @@ def read_frame(sock):
     return opcode, payload
 
 
-def run_ping(url, timeout):
+def open_socket(url, timeout):
     parsed = urlparse(url)
     if parsed.scheme not in ("ws", "http"):
-        return _fail("unsupported URL scheme: %s" % parsed.scheme)
+        raise IOError("unsupported URL scheme: %s" % parsed.scheme)
     host = parsed.hostname or "localhost"
     port = parsed.port or 80
     path = parsed.path or "/"
+    sock = socket.create_connection((host, port), timeout=timeout)
+    sock.settimeout(timeout)
     key = base64.b64encode(os.urandom(16)).decode("ascii")
+    do_handshake(sock, host, port, path, key)
+    return sock
+
+
+def rpc_exchange(url, timeout, payload, extra_wait=0.4):
+    """Send one JSON object, return every reply frame as decoded objects."""
+    sock = open_socket(url, timeout)
     try:
-        sock = socket.create_connection((host, port), timeout=timeout)
-    except OSError as exc:
-        return _fail("cannot connect to %s:%d: %s" % (host, port, exc))
-    try:
-        sock.settimeout(timeout)
+        send_masked_text(sock, json.dumps(payload, separators=(",", ":")))
+        messages = []
+        while True:
+            try:
+                opcode, raw = read_frame(sock)
+            except IOError as exc:
+                if messages:
+                    break
+                raise
+            if opcode == 0x8:
+                break
+            if opcode != 0x1:
+                continue
+            try:
+                text = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                raise IOError("reply frame is not valid UTF-8")
+            try:
+                messages.append(json.loads(text))
+            except ValueError:
+                messages.append({"_raw": text})
+            if len(messages) == 1:
+                sock.settimeout(extra_wait)
+        return messages
+    finally:
         try:
-            do_handshake(sock, host, port, path, key)
-        except IOError as exc:
-            return _fail("handshake failed: %s" % exc)
+            sock.settimeout(timeout)
+        except OSError:
+            pass
+        sock.close()
+
+
+def _flat_str(value):
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if value is None:
+        return "null"
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def check_expects(reply, expects):
+    for item in expects or []:
+        if "=" not in item:
+            print("probe failure: bad --expect %r (want k=v)" % item,
+                  file=sys.stderr)
+            return 1
+        key, _, want = item.partition("=")
+        got = _flat_str(reply.get(key, "MISSING")) if isinstance(reply, dict) \
+            else "MISSING"
+        if got != want:
+            print("expect_fail %s expected=%s got=%s" % (key, want, got))
+            return 1
+    return 0
+
+
+def emit_extra(messages):
+    for extra in messages[1:]:
+        if isinstance(extra, dict):
+            print("event=%s" % extra.get("m", "unknown"))
+        else:
+            print("event=unknown")
+
+
+def run_ping(url, timeout):
+    try:
+        sock = open_socket(url, timeout)
+    except (OSError, IOError) as exc:
+        return _fail("cannot connect: %s" % exc)
+    try:
         try:
             send_masked_text(sock, "ping")
         except (OSError, ValueError) as exc:
@@ -143,19 +234,196 @@ def run_ping(url, timeout):
     return 0
 
 
+def run_rpc_action(url, timeout, payload, expects, on_ok):
+    try:
+        messages = rpc_exchange(url, timeout, payload)
+    except (OSError, IOError) as exc:
+        return _fail("request failed: %s" % exc)
+    if not messages or not isinstance(messages[0], dict):
+        return _fail("empty reply from server")
+    reply = messages[0]
+    if not reply.get("ok", False):
+        print("error=%s" % reply.get("error", reply.get("reason", "UNKNOWN")))
+        return 1
+    for line in on_ok(reply):
+        print(line)
+    emit_extra(messages)
+    return check_expects(reply, expects)
+
+
+def do_create(args):
+    payload = {"v": 1, "m": "create_room", "name": args.name or "Host"}
+
+    def on_ok(reply):
+        return ("code=%s" % reply.get("code", ""),
+                "token=%s" % reply.get("token", ""),
+                "seats=%s" % _flat_str(reply.get("seats", 1)))
+
+    return run_rpc_action(args.url, args.timeout, payload, args.expect, on_ok)
+
+
+def do_join(args, code):
+    payload = {"v": 1, "m": "join_room", "code": code,
+               "name": args.name or "Guest"}
+    if args.token:
+        payload["token"] = args.token
+
+    def on_ok(reply):
+        return ("seats=%s" % _flat_str(reply.get("seats", "")),
+                "you=%s" % _flat_str(reply.get("you", reply.get("seat", ""))),
+                "token=%s" % reply.get("token", ""))
+
+    return run_rpc_action(args.url, args.timeout, payload, args.expect, on_ok)
+
+
+def do_add_bot(args, code):
+    payload = {"v": 1, "m": "add_bot", "code": code, "token": args.token or ""}
+
+    def on_ok(reply):
+        return ("seats=%s" % _flat_str(reply.get("seats", "")),)
+
+    return run_rpc_action(args.url, args.timeout, payload, args.expect, on_ok)
+
+
+def do_start(args, code):
+    payload = {"v": 1, "m": "start_game", "code": code,
+               "token": args.token or ""}
+
+    def on_ok(reply):
+        return ("started=true",
+                "turn=%s" % _flat_str(reply.get("turn", "")))
+
+    return run_rpc_action(args.url, args.timeout, payload, args.expect, on_ok)
+
+
+def do_pass_turn(args, code):
+    payload = {"v": 1, "m": "pass", "code": code, "token": args.token or ""}
+
+    def on_ok(reply):
+        return ("accepted=true",
+                "turn=%s" % _flat_str(reply.get("turn", "")))
+
+    return run_rpc_action(args.url, args.timeout, payload, args.expect, on_ok)
+
+
+def do_chat(args, code):
+    payload = {"v": 1, "m": "chat", "code": code, "token": args.token or "",
+               "text": args.chat}
+
+    def on_ok(reply):
+        return ("chat_ok=true",)
+
+    return run_rpc_action(args.url, args.timeout, payload, args.expect, on_ok)
+
+
+def do_generic_rpc(args):
+    try:
+        payload = json.loads(args.rpc)
+    except ValueError as exc:
+        print("probe failure: bad --rpc JSON: %s" % exc, file=sys.stderr)
+        return 2
+    if not isinstance(payload, dict):
+        print("probe failure: --rpc must be a JSON object", file=sys.stderr)
+        return 2
+    code = args.code or args.positional_code
+    if code and "code" not in payload:
+        payload["code"] = code
+    if args.token and "token" not in payload:
+        payload["token"] = args.token
+    if "v" not in payload and "version" not in payload:
+        payload["v"] = 1
+
+    def on_ok(reply):
+        lines = []
+        for key in ("m", "ok", "code", "token", "seat", "you", "seats",
+                    "started", "turn", "accepted", "total", "error"):
+            if key in reply:
+                lines.append("%s=%s" % (key, _flat_str(reply[key])))
+        lines.append("json=%s" % json.dumps(reply, separators=(",", ":"),
+                                            sort_keys=True))
+        return lines
+
+    return run_rpc_action(args.url, args.timeout, payload, args.expect, on_ok)
+
+
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Probe the Wordtable dev server.")
+    parser = argparse.ArgumentParser(description="Probe the Wordtable server.")
     parser.add_argument("--ping", action="store_true",
                         help="send a ping frame and expect PONG")
+    parser.add_argument("--create", action="store_true",
+                        help="create a room and print code=/token=/seats=")
+    parser.add_argument("--join", nargs="?", const=True, default=None,
+                        metavar="CODE",
+                        help="join a room (value, --code, or positional)")
+    parser.add_argument("--code", default=None,
+                        help="room code alias for join/add-bot/start/pass/chat")
+    parser.add_argument("--name", default=None,
+                        help="seat display name (default Host/Guest)")
+    parser.add_argument("--token", default="",
+                        help="session token for room actions")
+    parser.add_argument("--add-bot", action="store_true",
+                        help="seat the Botgomery stub (needs --code/--token)")
+    parser.add_argument("--start", action="store_true",
+                        help="start the game (needs --code/--token)")
+    parser.add_argument("--pass-turn", action="store_true",
+                        help="pass the current turn (needs --code/--token)")
+    parser.add_argument("--chat", nargs="?", const="", default=None,
+                        metavar="TEXT",
+                        help="send a chat message (needs --code/--token)")
+    parser.add_argument("--rpc", default=None, metavar="JSON",
+                        help="send a raw JSON object frame")
+    parser.add_argument("--expect", action="append", default=[],
+                        metavar="k=v",
+                        help="assert a flat reply key (repeatable)")
     parser.add_argument("--url", default="ws://localhost:9080",
                         help="websocket URL of the server (default ws://localhost:9080)")
     parser.add_argument("--timeout", type=float, default=5.0,
                         help="socket timeout in seconds (default 5)")
+    parser.add_argument("positional_code", nargs="?", default=None,
+                        help="room code (implies --join)")
     args = parser.parse_args(argv)
-    if not args.ping:
-        parser.print_usage(sys.stderr)
-        return 2
-    return run_ping(args.url, args.timeout)
+
+    if args.ping:
+        return run_ping(args.url, args.timeout)
+    if args.create:
+        return do_create(args)
+    join_value = None
+    if args.join is not None:
+        join_value = args.join if isinstance(args.join, str) else None
+        code = join_value or args.code or args.positional_code
+        if not code:
+            parser.print_usage(sys.stderr)
+            print("probe failure: --join needs a room code",
+                  file=sys.stderr)
+            return 2
+        return do_join(args, code)
+    if args.positional_code is not None and args.rpc is None \
+            and not (args.add_bot or args.start or args.pass_turn
+                     or args.chat is not None):
+        return do_join(args, args.positional_code)
+    needs_room = args.add_bot or args.start or args.pass_turn \
+        or args.chat is not None
+    if needs_room:
+        code = args.code or args.positional_code
+        if not code:
+            parser.print_usage(sys.stderr)
+            print("probe failure: this action needs --code", file=sys.stderr)
+            return 2
+        if not args.token:
+            parser.print_usage(sys.stderr)
+            print("probe failure: this action needs --token", file=sys.stderr)
+            return 2
+        if args.add_bot:
+            return do_add_bot(args, code)
+        if args.start:
+            return do_start(args, code)
+        if args.pass_turn:
+            return do_pass_turn(args, code)
+        return do_chat(args, code)
+    if args.rpc is not None:
+        return do_generic_rpc(args)
+    parser.print_usage(sys.stderr)
+    return 2
 
 
 if __name__ == "__main__":
