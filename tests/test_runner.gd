@@ -37,6 +37,10 @@ func _initialize() -> void:
 		if call("test_facade_suite") != true:
 			failed += 1
 			push_error("FAIL test_facade_suite: did not finish (runtime error?)")
+	elif suite == "placement":
+		if call("test_placement_suite") != true:
+			failed += 1
+			push_error("FAIL test_placement_suite: did not finish (runtime error?)")
 	elif suite == "strip_chat":
 		if call("test_strip_chat_suite") != true:
 			failed += 1
@@ -67,6 +71,7 @@ func _initialize() -> void:
 			"test_rules_suite",
 			"test_game_state_suite",
 			"test_facade_suite",
+			"test_placement_suite",
 			"test_strip_chat_suite",
 		]:
 			if call(t) != true:
@@ -150,6 +155,8 @@ func _get_suite_filter() -> String:
 			return "game_state"
 		if arg == "facade":
 			return "facade"
+		if arg == "placement":
+			return "placement"
 		if arg == "strip_chat":
 			return "strip_chat"
 	return ""
@@ -248,6 +255,12 @@ func test_game_state_suite() -> bool:
 func test_facade_suite() -> bool:
 	var facade_tests: GDScript = load("res://tests/test_facade.gd")
 	facade_tests.run_all(self)
+	return true
+
+
+func test_placement_suite() -> bool:
+	var placement_tests: GDScript = load("res://tests/test_placement.gd")
+	placement_tests.run_all(self)
 	return true
 
 

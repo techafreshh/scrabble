@@ -28,6 +28,7 @@ class_name BoardView
 extends Control
 
 signal cell_pressed(col: int, row: int)
+signal cell_drop_received(col: int, row: int, payload: Dictionary)
 
 const CELL_MIN := Vector2(24, 24)
 const STAR_TEXT := "★"
@@ -59,7 +60,9 @@ func _ensure_built() -> void:
 	for row: int in range(ScrabbleBoard.SIZE):
 		for col: int in range(ScrabbleBoard.SIZE):
 			var premium := ScrabbleBoard.premium_at(col, row)
-			var btn := Button.new()
+			var btn := BoardCell.new()
+			btn.col = col
+			btn.row = row
 			btn.focus_mode = Control.FOCUS_NONE
 			btn.custom_minimum_size = CELL_MIN
 			btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -69,6 +72,7 @@ func _ensure_built() -> void:
 			btn.tooltip_text = premium
 			btn.add_theme_font_size_override("font_size", 12)
 			btn.pressed.connect(_on_cell_pressed.bind(col, row))
+			btn.cell_drop.connect(_on_cell_drop)
 			grid.add_child(btn)
 			_cells.append(btn)
 			_refresh_cell(col, row)
@@ -169,6 +173,10 @@ func is_last_move(col: int, row: int) -> bool:
 
 func _on_cell_pressed(col: int, row: int) -> void:
 	cell_pressed.emit(col, row)
+
+
+func _on_cell_drop(col: int, row: int, payload: Dictionary) -> void:
+	cell_drop_received.emit(col, row, payload)
 
 
 func _square_label(premium: String) -> String:
