@@ -182,6 +182,7 @@ func add_bot(code: String, token: String) -> Dictionary:
 	return {
 		"ok": true, "m": "add_bot", "code": str(room["code"]),
 		"bot": BOT_NAME, "bot_seat": seat_no,
+		"seat": BOT_NAME, "bot_seated": true,
 		"seats": seats.size(), "seat_count": seats.size(),
 		"seats_list": _public_seats(room),
 	}
@@ -566,7 +567,7 @@ func poll_timers(now_ms: int) -> Array:
 
 
 # Bot think-delay branch: when the turn sits on a bot seat past its think
-# deadline, commit one ScrabbleBot move (pass fallback when none is legal),
+# deadline, commit one BotSeat move (pass fallback when none is legal),
 # refresh the clock, re-arm for the next turn, and emit the same
 # turn_update/game_over frame shape as auto-pass plus bot_move:true.
 # Returns true when it consumed this tick for the room. No new wire methods.
@@ -584,7 +585,7 @@ func _poll_bot(room: Dictionary, game: LocalGame, now_ms: int, out: Array) -> bo
 	if not (seat is Dictionary) or not bool((seat as Dictionary).get("is_bot", false)):
 		room["bot_deadline_ms"] = -1
 		return false
-	var mv := ScrabbleBot.generate_move(game.board, game.rack_letters(turn), _lexicon, _bot_seed(room))
+	var mv := BotSeat.choose_move(game.board, game.rack_letters(turn), _lexicon, _bot_seed(room))
 	if bool(mv.get("ok", false)):
 		game.place(mv.get("placements", []), mv.get("blank_map", {}))
 	else:
@@ -612,6 +613,7 @@ func _bot_seed(room: Dictionary) -> int:
 
 # Arms the think deadline when the turn sits on a bot seat of a live game,
 # else leaves it disarmed (-1), mirroring GameBinding.refresh_deadline.
+# Driven through the BotSeat seam so rooms and the soak share one oracle.
 func _arm_bot(room: Dictionary, now_ms: int) -> void:
 	room["bot_deadline_ms"] = -1
 	if not bool(room.get("started", false)):
@@ -627,7 +629,7 @@ func _arm_bot(room: Dictionary, now_ms: int) -> void:
 		return
 	var seat = seats[turn]
 	if seat is Dictionary and bool((seat as Dictionary).get("is_bot", false)):
-		room["bot_deadline_ms"] = int(now_ms) + ScrabbleBot.think_delay_ms(_bot_seed(room))
+		room["bot_deadline_ms"] = int(now_ms) + BotSeat.think_delay_ms(_bot_seed(room))
 
 
 func chat(code: String, token: String, text: String) -> Dictionary:
