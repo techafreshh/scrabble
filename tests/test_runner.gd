@@ -196,6 +196,9 @@ func test_dictionary_pluggable_path() -> bool:
 	assert_true(dict.is_word("apple"), "dictionary_pluggable_hit_lower")
 	assert_true(dict.is_word("BANANA"), "dictionary_pluggable_hit_upper")
 	assert_eq(dict.is_word("CHERRY"), false, "dictionary_pluggable_miss")
+	var remove_err: Error = DirAccess.remove_absolute(tmp_path)
+	assert_eq(remove_err, OK, "dictionary_pluggable_cleanup_ok")
+	assert_eq(FileAccess.file_exists(tmp_path), false, "dictionary_pluggable_tmp_removed")
 	return true
 
 
