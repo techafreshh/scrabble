@@ -10,6 +10,12 @@ const SIZE := 15
 # Center star square (H8): 0-indexed column/row.
 const CENTER := Vector2i(7, 7)
 
+# Tri-state outcome codes for try_place_tile: rejected (invalid write),
+# placed (fresh write), or duplicate (same letter already on the square).
+const PLACE_REJECTED := 0
+const PLACE_PLACED := 1
+const PLACE_DUPLICATE := 2
+
 # Official premium layout, 0-indexed (col, row) pairs, x=column, y=row.
 # TW (8): row 1 A/H/O, row 8 A/O, row 15 A/H/O.
 const TW: Array = [
@@ -126,20 +132,31 @@ func tile_at(col: int, row: int) -> String:
 
 # Places a tile; false on out-of-range / empty-letter /
 # overwriting a different letter. Re-placing the same letter is a no-op true.
+# Thin wrapper over try_place_tile; callers needing the fresh-vs-duplicate
+# distinction should call try_place_tile directly.
 func place_tile(col: int, row: int, letter: String) -> bool:
+	return try_place_tile(col, row, letter) != PLACE_REJECTED
+
+
+# Tri-state placement: PLACE_PLACED on a fresh write, PLACE_DUPLICATE when
+# the cell already holds the same letter (no mutation), PLACE_REJECTED on
+# out-of-range / empty-letter / overwriting a different letter.
+func try_place_tile(col: int, row: int, letter: String) -> int:
 	if not is_in_bounds(col, row):
-		return false
+		return PLACE_REJECTED
 	var face := letter.strip_edges().to_upper()
 	if face.length() != 1:
-		return false
+		return PLACE_REJECTED
 	var ch := face.substr(0, 1)
 	if ch < "A" or ch > "Z":
-		return false
+		return PLACE_REJECTED
 	var idx := row * SIZE + col
 	if _cells[idx] != "" and _cells[idx] != ch:
-		return false
+		return PLACE_REJECTED
+	if _cells[idx] == ch:
+		return PLACE_DUPLICATE
 	_cells[idx] = ch
-	return true
+	return PLACE_PLACED
 
 
 # Start of the contiguous tile run through (col, row) along an axis.
