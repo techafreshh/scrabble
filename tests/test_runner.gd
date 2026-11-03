@@ -69,6 +69,10 @@ func _initialize() -> void:
 		if call("test_reconnect_suite") != true:
 			failed += 1
 			push_error("FAIL test_reconnect_suite: did not finish (runtime error?)")
+	elif suite == "export":
+		if call("test_export_suite") != true:
+			failed += 1
+			push_error("FAIL test_export_suite: did not finish (runtime error?)")
 	elif suite == "bot_gen":
 		if call("test_bot_gen_suite") != true:
 			failed += 1
@@ -96,6 +100,7 @@ func _initialize() -> void:
 			"test_dictionary_load",
 			"test_dictionary_lookup",
 			"test_dictionary_pluggable_path",
+			"test_export_suite",
 			"test_rules_suite",
 			"test_game_state_suite",
 			"test_facade_suite",
@@ -204,6 +209,8 @@ func _get_suite_filter() -> String:
 			return "rooms"
 		if arg == "net_client":
 			return "net_client"
+		if arg == "export":
+			return "export"
 		if arg == "bot_gen" or arg == "botgen":
 			return "bot_gen"
 	return ""
@@ -350,6 +357,12 @@ func test_net_client_suite() -> bool:
 func test_reconnect_suite() -> bool:
 	var reconnect_tests: GDScript = load("res://tests/test_reconnect.gd")
 	reconnect_tests.run_all(self, _get_suite_filter() == "reconnect")
+	return true
+
+
+func test_export_suite() -> bool:
+	var export_tests: GDScript = load("res://tests/test_export.gd")
+	export_tests.run_all(self)
 	return true
 
 
