@@ -188,19 +188,89 @@ static func _tile_for_face(face: String) -> Dictionary:
 	return {"letter": up, "value": int(LETTER_VALUES.get(up, 0)), "is_blank": false}
 
 
-# Scoring move by the current player: banks points, drops the first
-# tiles_played rack tiles, refills to RACK_SIZE, resets the scoreless
-# streak, then checks the bag-empty ending before advancing the turn.
-func record_score(points: int, tiles_played: int) -> Dictionary:
+# Removes exactly the faces listed in played_tiles from rack (verify first,
+# mutate only on full success). Each entry is a bare String face ("" =
+# blank) or a Dictionary with `letter` plus `blank`/`is_blank`. A blank
+# entry consumes any is_blank rack tile regardless of face; a letter entry
+# consumes a non-blank tile with the equal face (case/whitespace
+# insensitive). Returns false on any size mismatch, malformed entry, or
+# rack shortage, leaving rack untouched.
+static func _remove_played_faces(rack: Array, played_tiles: Array) -> bool:
+	var needed: Array = []
+	for e in played_tiles:
+		var letter := ""
+		var blank := false
+		if e is String:
+			var s := str(e).strip_edges().to_upper()
+			if s == "":
+				blank = true
+			else:
+				letter = s
+		elif e is Dictionary:
+			var d: Dictionary = e
+			var face := str(d.get("letter", "")).strip_edges().to_upper()
+			blank = bool(d.get("blank", d.get("is_blank", face == "")))
+			if not blank:
+				if face == "":
+					return false
+				letter = face
+			else:
+				letter = face
+		else:
+			return false
+		needed.append({"letter": letter, "blank": blank})
+	var avail: Array = []
+	for i: int in range(rack.size()):
+		avail.append(i)
+	var used: Array = []
+	for n in needed:
+		var need_blank := bool((n as Dictionary).get("blank", false))
+		var need_letter := str((n as Dictionary).get("letter", ""))
+		var found := -1
+		for idx in avail:
+			var t: Dictionary = rack[int(idx)] as Dictionary
+			var tile_blank := bool(t.get("is_blank", false))
+			if need_blank and tile_blank:
+				found = int(idx)
+				break
+			if not need_blank and not tile_blank and str(t.get("letter", "")) == need_letter:
+				found = int(idx)
+				break
+		if found == -1:
+			return false
+		avail.erase(found)
+		used.append(found)
+	used.sort()
+	used.reverse()
+	for idx in used:
+		rack.remove_at(int(idx))
+	return true
+
+
+# Scoring move by the current player: banks points, removes exactly the
+# faces in played_tiles when supplied (blank-aware exact-tile removal),
+# otherwise drops the first tiles_played rack tiles (legacy count path),
+# refills to RACK_SIZE, resets the scoreless streak, then checks the
+# bag-empty ending before advancing the turn. A supplied played_tiles
+# whose size mismatches tiles_played, or whose faces the rack cannot
+# cover, rejects BAD_PLAY with scores/bag/turn untouched.
+func record_score(points: int, tiles_played: int, played_tiles: Array = []) -> Dictionary:
 	if _over:
 		return {"ok": false, "reason": "GAME_OVER", "over": _over, "ending": _ending}
 	var me := _turn
 	var rack: Array = _racks[me] as Array
 	if points < 0 or tiles_played <= 0 or tiles_played > rack.size():
 		return {"ok": false, "reason": "BAD_PLAY", "over": _over, "ending": _ending}
+	var exact := not played_tiles.is_empty()
+	if exact:
+		if played_tiles.size() != tiles_played:
+			return {"ok": false, "reason": "BAD_PLAY", "over": _over, "ending": _ending}
+		if not _remove_played_faces(rack, played_tiles):
+			return {"ok": false, "reason": "BAD_PLAY", "over": _over, "ending": _ending}
 	scores[me] += points
-	for i: int in range(tiles_played):
-		rack.pop_front()
+	if not exact:
+		for i: int in range(tiles_played):
+			rack.pop_front()
 	while rack.size() < RACK_SIZE and not _bag.is_empty():
 		rack.append(_bag.pop_back())
 	_scoreless = 0

@@ -135,7 +135,7 @@ func place(placements: Array, blank_map: Dictionary = {}) -> Dictionary:
 			int(n.get("col", -1)), int(n.get("row", -1)), str(n.get("letter", ""))
 		)
 	var total := int(res.get("total", 0))
-	var grec := game.record_score(total, fresh_count)
+	var grec := game.record_score(total, fresh_count, fresh)
 	if not bool(grec.get("ok", false)):
 		return _reject(me, str(grec.get("reason", "BAD_PLAY")), "")
 	_pending.clear()

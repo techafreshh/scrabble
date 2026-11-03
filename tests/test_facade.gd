@@ -183,4 +183,24 @@ static func run_all(runner: SceneTree) -> void:
 	runner.assert_eq(str(delta.get("m", "")), "game_over", "facade_delta_game_over")
 	runner.assert_true(bool(delta.get("over", false)), "facade_delta_over_true")
 	runner.assert_true((delta.get("history", []) as Array).size() >= 3, "facade_delta_keeps_history")
+	_facade_exact_rack_consumption(runner)
 	print("facade_complete=true")
+
+
+# End-to-end rack-identity regression: the played letters sit mid-rack,
+# so the old pop-front path would keep the wrong tiles; the commit must
+# drop exactly the fresh faces written to the board.
+static func _facade_exact_rack_consumption(runner: SceneTree) -> void:
+	var lex := FakeLexicon.new(["CAT", "CATS", "OX", "CO", "AX", "TE", "OXE"])
+	var fg := LocalGame.new(2, 4321, lex)
+	fg.debug_set_rack(0, ["X", "C", "A", "T", "D", "E", "F"])
+	var full: Array = []
+	for i: int in range(100):
+		full.append("E")
+	fg.debug_set_bag(full)
+	var r := fg.place([_pl(6, 7, "C"), _pl(7, 7, "A"), _pl(8, 7, "T")])
+	runner.assert_true(bool(r.get("ok", false)), "facade_exact_commit_ok")
+	var after: Array = fg.rack_letters(0).duplicate()
+	after.sort()
+	# Pre-rack minus C/A/T plus three E refills from the pinned bag.
+	runner.assert_eq(after, ["D", "E", "E", "E", "E", "F", "X"], "facade_exact_drops_played_faces")
