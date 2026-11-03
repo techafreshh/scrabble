@@ -266,3 +266,55 @@ jobs:
           else
             echo "smoke log not found: /tmp/ws_smoke.log"
           fi
+
+  export-check:
+    name: Export check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Godot 4.7.2
+        run: |
+          set -euxo pipefail
+          GODOT_VERSION="4.7.2-stable"
+          ASSET="Godot_v${GODOT_VERSION}_linux.x86_64.zip"
+          curl -fSL -o /tmp/godot.zip \
+            "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}/${ASSET}"
+          sudo unzip -o /tmp/godot.zip -d /usr/local/bin
+          sudo mv /usr/local/bin/Godot_v${GODOT_VERSION}_linux.x86_64 /usr/local/bin/godot
+          sudo chmod +x /usr/local/bin/godot
+          rm /tmp/godot.zip
+          godot --version
+
+      - name: Import
+        timeout-minutes: 5
+        run: godot --headless --path . --import
+
+      - name: Check export presets
+        timeout-minutes: 5
+        run: |
+          set -euxo pipefail
+          grep -q 'name="Web"' export_presets.cfg
+          grep -q 'name="Windows"' export_presets.cfg
+          grep -q 'name="Linux"' export_presets.cfg
+          grep -q 'name="macOS"' export_presets.cfg
+          grep -q 'single_threaded=true' export_presets.cfg
+          grep -q 'variant/thread_support=false' export_presets.cfg
+          grep -qF '*.txt' export_presets.cfg
+
+      - name: Run export suite
+        timeout-minutes: 5
+        run: godot --headless --path . --script res://tests/test_runner.gd --suite export
+
+      - name: Run export checker
+        timeout-minutes: 5
+        run: |
+          set -euxo pipefail
+          godot --headless --path . --script res://tests/export_check.gd | tee /tmp/export_check.log
+          grep -q "single_threaded=true" /tmp/export_check.log
+          grep -q "lexicon_from_pck=true" /tmp/export_check.log
+          grep -q "web_mb=" /tmp/export_check.log
+          grep -qF "web_mb<=50" /tmp/export_check.log
+          awk -F= '/^web_mb=[0-9]+$/ { if ($2 + 0 > 50) exit 1 }' /tmp/export_check.log
