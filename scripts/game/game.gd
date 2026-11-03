@@ -248,12 +248,12 @@ static func _remove_played_faces(rack: Array, played_tiles: Array) -> bool:
 
 
 # Scoring move by the current player: banks points, removes exactly the
-# faces in played_tiles when supplied (blank-aware exact-tile removal),
-# otherwise drops the first tiles_played rack tiles (legacy count path),
-# refills to RACK_SIZE, resets the scoreless streak, then checks the
-# bag-empty ending before advancing the turn. A supplied played_tiles
-# whose size mismatches tiles_played, or whose faces the rack cannot
-# cover, rejects BAD_PLAY with scores/bag/turn untouched.
+# faces in played_tiles (blank-aware exact-tile removal), refills to
+# RACK_SIZE, resets the scoreless streak, then checks the bag-empty
+# ending before advancing the turn. played_tiles is required: a
+# count-only call (empty/missing faces), a size mismatch with
+# tiles_played, or faces the rack cannot cover rejects BAD_PLAY with
+# scores/bag/turn untouched.
 func record_score(points: int, tiles_played: int, played_tiles: Array = []) -> Dictionary:
 	if _over:
 		return {"ok": false, "reason": "GAME_OVER", "over": _over, "ending": _ending}
@@ -261,16 +261,13 @@ func record_score(points: int, tiles_played: int, played_tiles: Array = []) -> D
 	var rack: Array = _racks[me] as Array
 	if points < 0 or tiles_played <= 0 or tiles_played > rack.size():
 		return {"ok": false, "reason": "BAD_PLAY", "over": _over, "ending": _ending}
-	var exact := not played_tiles.is_empty()
-	if exact:
-		if played_tiles.size() != tiles_played:
-			return {"ok": false, "reason": "BAD_PLAY", "over": _over, "ending": _ending}
-		if not _remove_played_faces(rack, played_tiles):
-			return {"ok": false, "reason": "BAD_PLAY", "over": _over, "ending": _ending}
+	if played_tiles.is_empty():
+		return {"ok": false, "reason": "BAD_PLAY", "over": _over, "ending": _ending}
+	if played_tiles.size() != tiles_played:
+		return {"ok": false, "reason": "BAD_PLAY", "over": _over, "ending": _ending}
+	if not _remove_played_faces(rack, played_tiles):
+		return {"ok": false, "reason": "BAD_PLAY", "over": _over, "ending": _ending}
 	scores[me] += points
-	if not exact:
-		for i: int in range(tiles_played):
-			rack.pop_front()
 	while rack.size() < RACK_SIZE and not _bag.is_empty():
 		rack.append(_bag.pop_back())
 	_scoreless = 0

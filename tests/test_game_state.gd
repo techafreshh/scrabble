@@ -29,7 +29,7 @@ static func _game_bag_empty(runner: SceneTree) -> void:
 	game.debug_set_bag([])
 	game.debug_set_rack(0, ["A"])
 	game.debug_set_rack(1, ["Z", "Q"])
-	var res: Dictionary = game.record_score(5, 1)
+	var res: Dictionary = game.record_score(5, 1, ["A"])
 	runner.assert_true(bool(res.get("ok", false)), "game_bag_empty_move_ok")
 	runner.assert_true(game.is_over(), "game_bag_empty_over")
 	runner.assert_eq(game.ending(), "bag_empty", "game_bag_empty_ending")
@@ -47,7 +47,8 @@ static func _game_six_scoreless(runner: SceneTree) -> void:
 	game.pass_turn()
 	game.pass_turn()
 	runner.assert_eq(game.scoreless_count(), 2, "game_streak_two_passes")
-	var res: Dictionary = game.record_score(8, 2)
+	var faces: Array = game.rack_letters(game.current_player()).slice(0, 2)
+	var res: Dictionary = game.record_score(8, 2, faces)
 	runner.assert_true(bool(res.get("ok", false)), "game_streak_score_ok")
 	runner.assert_eq(game.scoreless_count(), 0, "game_streak_reset_on_score")
 	for i: int in range(6):
@@ -95,7 +96,8 @@ static func _game_exchange_and_rematch(runner: SceneTree) -> void:
 	runner.assert_eq(game.scoreless_count(), streak_before + 1, "game_exchange_bumps_streak")
 	runner.assert_eq(game.current_player(), (turn_before + 1) % 2, "game_exchange_advances_turn")
 
-	var mv: Dictionary = game.record_score(10, 2)
+	var pre: Array = game.rack_letters(game.current_player()).slice(0, 2)
+	var mv: Dictionary = game.record_score(10, 2, pre)
 	runner.assert_true(bool(mv.get("ok", false)), "game_prematch_score_ok")
 	game.rematch()
 	runner.assert_eq(game.score_of(0), 0, "game_rematch_zero_p0")
@@ -241,10 +243,17 @@ static func _game_record_score_exact_tiles(runner: SceneTree) -> void:
 	runner.assert_eq(mf.score_of(0), 0, "game_exact_empty_face_score_unchanged")
 	runner.assert_eq(mf.current_player(), 0, "game_exact_empty_face_turn_unchanged")
 
-	# Legacy count path: no third argument still drops from the front.
+	# Legacy count path removed: a count-only call rejects BAD_PLAY with
+	# rack/bag/score/turn untouched instead of guessing front tiles.
 	var leg := ScrabbleGame.new(2, 11)
 	leg.debug_set_rack(0, ["X", "C", "A", "T", "D", "E", "F"])
 	leg.debug_set_bag([])
+	var leg_rack: Array = leg.rack_letters(0)
+	var leg_bag: int = leg.bag_remaining()
 	var rleg: Dictionary = leg.record_score(5, 2)
-	runner.assert_true(bool(rleg.get("ok", false)), "game_exact_legacy_ok")
-	runner.assert_eq(leg.rack_letters(0), ["A", "T", "D", "E", "F"], "game_exact_legacy_pops_front")
+	runner.assert_eq(bool(rleg.get("ok", true)), false, "game_exact_legacy_rejected")
+	runner.assert_eq(str(rleg.get("reason", "")), "BAD_PLAY", "game_exact_legacy_reason")
+	runner.assert_eq(leg.rack_letters(0), leg_rack, "game_exact_legacy_rack_unchanged")
+	runner.assert_eq(leg.bag_remaining(), leg_bag, "game_exact_legacy_bag_unchanged")
+	runner.assert_eq(leg.score_of(0), 0, "game_exact_legacy_score_unchanged")
+	runner.assert_eq(leg.current_player(), 0, "game_exact_legacy_turn_unchanged")
