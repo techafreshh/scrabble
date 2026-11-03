@@ -17,6 +17,10 @@ func _initialize() -> void:
 		if call("test_board_suite") != true:
 			failed += 1
 			push_error("FAIL test_board_suite: did not finish (runtime error?)")
+	elif suite == "board_scene":
+		if call("test_board_scene_suite") != true:
+			failed += 1
+			push_error("FAIL test_board_scene_suite: did not finish (runtime error?)")
 	elif suite == "theme":
 		if call("test_theme_suite") != true:
 			failed += 1
@@ -47,6 +51,7 @@ func _initialize() -> void:
 			"test_ping_reject",
 			"test_bag_suite",
 			"test_board_suite",
+			"test_board_scene_suite",
 			"test_theme_suite",
 			"test_dictionary_load",
 			"test_dictionary_lookup",
@@ -196,6 +201,12 @@ func test_bag_suite() -> bool:
 func test_board_suite() -> bool:
 	var board_tests: GDScript = load("res://tests/test_board.gd")
 	board_tests.run_all(self)
+	return true
+
+
+func test_board_scene_suite() -> bool:
+	var board_scene_tests: GDScript = load("res://tests/test_board_scene.gd")
+	board_scene_tests.run_all(self)
 	return true
 
 
