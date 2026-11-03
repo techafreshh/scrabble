@@ -197,3 +197,72 @@ jobs:
           if [ -f /tmp/reconnect.log ]; then
             cat /tmp/reconnect.log || true
           fi
+
+  network-smoke:
+    name: Network smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Godot 4.7.2
+        run: |
+          set -euxo pipefail
+          GODOT_VERSION="4.7.2-stable"
+          ASSET="Godot_v${GODOT_VERSION}_linux.x86_64.zip"
+          curl -fSL -o /tmp/godot.zip \
+            "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}/${ASSET}"
+          sudo unzip -o /tmp/godot.zip -d /usr/local/bin
+          sudo mv /usr/local/bin/Godot_v${GODOT_VERSION}_linux.x86_64 /usr/local/bin/godot
+          sudo chmod +x /usr/local/bin/godot
+          rm /tmp/godot.zip
+          godot --version
+
+      - name: Import
+        timeout-minutes: 5
+        run: godot --headless --path . --import
+
+      - name: Two clients, forced drop, full legit game
+        timeout-minutes: 5
+        run: |
+          set -euxo pipefail
+          godot --headless --path . > /tmp/godot_smoke_server.log 2>&1 &
+          SERVER_PID=$!
+          cleanup() { kill "$SERVER_PID" 2>/dev/null || true; }
+          trap cleanup EXIT
+          for i in $(seq 1 30); do
+            if python3 -c "import socket; socket.create_connection(('127.0.0.1', 9080), timeout=1).close()" 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          godot --headless -s tests/net_smoke.gd | tee /tmp/net_smoke.log
+          grep -q "smoke_game_over=true" /tmp/net_smoke.log
+          grep -q "smoke_resync=true" /tmp/net_smoke.log
+          grep -q "illegal_states=0" /tmp/net_smoke.log
+          python3 tests/ws_probe.py --smoke | tee /tmp/ws_smoke.log
+          grep -q "smoke_game_over=true" /tmp/ws_smoke.log
+          grep -q "smoke_resync=true" /tmp/ws_smoke.log
+          grep -q "illegal_states=0" /tmp/ws_smoke.log
+
+      - name: Dump smoke logs on failure
+        if: failure()
+        timeout-minutes: 5
+        run: |
+          set -euxo pipefail
+          if [ -f /tmp/godot_smoke_server.log ]; then
+            cat /tmp/godot_smoke_server.log || true
+          else
+            echo "server log not found: /tmp/godot_smoke_server.log"
+          fi
+          if [ -f /tmp/net_smoke.log ]; then
+            cat /tmp/net_smoke.log || true
+          else
+            echo "smoke log not found: /tmp/net_smoke.log"
+          fi
+          if [ -f /tmp/ws_smoke.log ]; then
+            cat /tmp/ws_smoke.log || true
+          else
+            echo "smoke log not found: /tmp/ws_smoke.log"
+          fi
