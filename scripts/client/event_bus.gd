@@ -34,6 +34,7 @@ const SERVER_LEXICON_REASON := "NOT_IN_LEXICON"
 var _turn := 0
 var _scores: Array = []
 var _rack: Array = []
+var _board_tiles: Array = []
 var _over := false
 var _code := ""
 var _seat_count := 0
@@ -54,6 +55,10 @@ func get_scores() -> Array:
 
 func get_rack() -> Array:
 	return _rack.duplicate()
+
+
+func get_board_tiles() -> Array:
+	return _board_tiles.duplicate(true)
 
 
 func is_over() -> bool:
@@ -110,6 +115,15 @@ func apply_server_frame(frame: Dictionary) -> String:
 		return "reject"
 	var m := str(frame.get("m", ""))
 	match m:
+		"rejoin", "resync":
+			if not bool(frame.get("ok", false)):
+				return "rejoin_error"
+			_sync_state_fields(frame)
+			_synced = true
+			state_synced.emit()
+			if _emit_seats(frame):
+				return "rejoin+seats"
+			return "rejoin"
 		"state_sync":
 			_sync_state_fields(frame)
 			_synced = true
@@ -169,6 +183,8 @@ func _sync_state_fields(frame: Dictionary) -> void:
 		_scores = (frame.get("scores") as Array).duplicate()
 	if frame.get("rack", null) is Array:
 		_rack = (frame.get("rack") as Array).duplicate()
+	if frame.get("board_tiles", null) is Array:
+		_board_tiles = (frame.get("board_tiles") as Array).duplicate(true)
 	if frame.has("over"):
 		_over = bool(frame.get("over"))
 	if frame.has("code"):

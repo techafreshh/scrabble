@@ -28,6 +28,14 @@ var last_reply := {}
 var received: Array = []
 var last_error := ""
 
+var _overlay = null
+var _reconnecting := false
+var _reconnect_attempt := 0
+var _reconnect_due_ms := -1
+var _rejoin_pending := false
+var _rejoin_sent_ms := 0
+var _before_snap := {}
+
 var _ws: WebSocketPeer
 var _outbox: Array = []
 var _board_view = null
@@ -89,18 +97,41 @@ func _process(_delta: float) -> void:
 # Handshake completion plus the server-style drain loop: first parse
 # `ping` (ignored — the server never pings), then `{`-frames go to
 # JSON.parse_string and on to handle_frame. Never raises on inbound bytes.
+# A closed socket starts the reconnect episode (overlay plus backoff
+# timer); the timer ticks on every poll path so a redial fires even while
+# the peer sits in CLOSING.
 func poll() -> void:
 	_ensure_ready()
 	if _ws == null:
 		return
 	var state := _ws.get_ready_state()
+	if state == WebSocketPeer.STATE_CLOSED:
+		_on_socket_lost()
+		_tick_reconnect()
+		return
+	if state == WebSocketPeer.STATE_CLOSING:
+		# The closing handshake only completes while polled; without this
+		# a disconnect()ed peer never reaches CLOSED and never redials.
+		_ws.poll()
+		if _ws.get_ready_state() == WebSocketPeer.STATE_CLOSED:
+			_on_socket_lost()
+		_tick_reconnect()
+		return
 	if state != WebSocketPeer.STATE_OPEN and state != WebSocketPeer.STATE_CONNECTING:
+		_tick_reconnect()
 		return
 	_ws.poll()
-	if _ws.get_ready_state() != WebSocketPeer.STATE_OPEN:
+	var after := _ws.get_ready_state()
+	if after == WebSocketPeer.STATE_CLOSED:
+		_on_socket_lost()
+		_tick_reconnect()
+		return
+	if after != WebSocketPeer.STATE_OPEN:
+		_tick_reconnect()
 		return
 	_flush()
 	_drain()
+	_tick_reconnect()
 
 
 # _ready does not run for nodes added during SceneTree._initialize in
@@ -136,12 +167,16 @@ func handle_frame(frame: Dictionary) -> String:
 			seat = int(frame.get("seat"))
 		elif frame.has("you"):
 			seat = int(frame.get("you"))
+		if code != "" and token != "":
+			ReconnectOverlay.save_session(code, token)
 	if bus == null:
 		return "no_bus"
 	var route := bus.apply_server_frame(frame)
 	if route == "reject" and str(frame.get("m", "")) in ["place_tiles", "place"]:
 		if _board_view != null:
 			CommitFx.new().bounce(_board_view, _placement)
+	if str(frame.get("m", "")) in ["rejoin", "resync"]:
+		_on_resync_frame(frame)
 	return route
 
 
@@ -149,6 +184,154 @@ func handle_frame(frame: Dictionary) -> String:
 func bind_views(board_view, placement = null) -> void:
 	_board_view = board_view
 	_placement = placement
+
+
+# The overlay shell for the reconnect episode (duck-typed: the client
+# works headless with none bound and still prints the markers).
+func bind_overlay(overlay) -> void:
+	_overlay = overlay
+	if _overlay != null and _overlay.has_method("bind_net"):
+		_overlay.call("bind_net", self)
+
+
+# Immediate rejoin with the stored identity: snapshots first (when no
+# episode snapshot exists yet), redials a dead socket, and queues the
+# rejoin so the flush sends it the moment the socket is open. The Retry
+# button and the backoff timer both funnel through here.
+func rejoin_room() -> void:
+	_ensure_ready()
+	if code == "" or token == "":
+		return
+	if _before_snap.is_empty():
+		_before_snap = _take_snapshot()
+	if not _reconnecting:
+		_reconnecting = true
+		_reconnect_attempt = 1
+	_show_overlay("manual")
+	if not is_open() and _ws.get_ready_state() == WebSocketPeer.STATE_CLOSED:
+		connect_to_server()
+	_rejoin_pending = true
+	_rejoin_sent_ms = int(Time.get_ticks_msec())
+	_send({"v": PROTOCOL_VERSION, "m": "rejoin", "code": code, "token": token})
+	_reconnect_attempt += 1
+	_arm_reconnect()
+
+
+# Current bus state plus the last broadcast board: the before half of the
+# resync comparison. Duck-typed so nothing here assumes overlay presence.
+func _take_snapshot() -> Dictionary:
+	var snap := {"rack": [], "scores": [], "board_tiles": []}
+	if bus == null:
+		return snap
+	if bus.has_method("get_rack"):
+		snap["rack"] = bus.call("get_rack")
+	if bus.has_method("get_scores"):
+		snap["scores"] = bus.call("get_scores")
+	if bus.has_method("get_board_tiles"):
+		snap["board_tiles"] = bus.call("get_board_tiles")
+	return snap
+
+
+func _show_overlay(reason: String) -> void:
+	if _overlay != null and _overlay.has_method("show_overlay"):
+		_overlay.call("show_overlay", reason)
+	else:
+		print("overlay=Reconnecting")
+
+
+func _hide_overlay() -> void:
+	if _overlay != null and _overlay.has_method("hide_overlay"):
+		_overlay.call("hide_overlay")
+
+
+func _overlay_visible() -> bool:
+	if _overlay == null:
+		return _reconnecting
+	if _overlay.has_method("is_showing"):
+		return bool(_overlay.call("is_showing"))
+	return bool(_overlay.get("visible"))
+
+
+func _stop_reconnect() -> void:
+	_reconnecting = false
+	_reconnect_attempt = 0
+	_reconnect_due_ms = -1
+	_rejoin_pending = false
+	_hide_overlay()
+
+
+func _arm_reconnect() -> void:
+	_reconnect_due_ms = int(Time.get_ticks_msec()) + ReconnectOverlay.compute_delay_ms(_reconnect_attempt)
+
+
+# Episode start on a dead socket: snapshot once, show the overlay, and arm
+# the first backoff step. No-ops while open, without identity, or when an
+# episode already runs, so every poll can call it unconditionally.
+func _on_socket_lost() -> void:
+	if is_open():
+		return
+	if code == "" or token == "":
+		return
+	if _reconnecting:
+		return
+	_reconnecting = true
+	_reconnect_attempt = 1
+	_before_snap = _take_snapshot()
+	_show_overlay("closed")
+	_arm_reconnect()
+
+
+# One backoff step: redial a dead socket, send the rejoin once open, and
+# re-arm while the reply is in flight. Stops itself when the identity is
+# gone (nothing left to rejoin with).
+func _tick_reconnect() -> void:
+	if not _reconnecting:
+		return
+	if _reconnect_due_ms >= 0 and int(Time.get_ticks_msec()) < _reconnect_due_ms:
+		return
+	_reconnect_due_ms = -1
+	if code == "" or token == "":
+		_stop_reconnect()
+		return
+	if _rejoin_pending and is_open():
+		_reconnect_attempt += 1
+		_arm_reconnect()
+		return
+	if _rejoin_pending:
+		# A reply can never arrive on a dead socket: drop the flag so the
+		# arm below redials and resends instead of waiting on it.
+		_rejoin_pending = false
+	if not is_open():
+		if _ws.get_ready_state() == WebSocketPeer.STATE_CLOSED:
+			connect_to_server()
+		_reconnect_attempt += 1
+		_arm_reconnect()
+		return
+	rejoin_room()
+
+
+# Settles the episode: on ok, measures the round trip, compares the
+# snapshot, prints the resync markers, and hides the overlay; on error
+# (e.g. BAD_TOKEN) stops retrying so a wrong token cannot spin forever.
+func _on_resync_frame(frame: Dictionary) -> void:
+	if not _rejoin_pending:
+		return
+	_rejoin_pending = false
+	if not bool(frame.get("ok", false)):
+		_before_snap = {}
+		_stop_reconnect()
+		return
+	var ms := int(Time.get_ticks_msec()) - _rejoin_sent_ms
+	print("resync_ms=%d" % ms)
+	var after := {
+		"rack": frame.get("rack", []),
+		"scores": frame.get("scores", []),
+		"board_tiles": frame.get("board_tiles", []),
+	}
+	var same := ReconnectOverlay.compare_snapshots(_before_snap, after)
+	print("resync_identical=" + ("true" if same else "false"))
+	_before_snap = {}
+	_stop_reconnect()
 
 
 # Only staged squares go on the wire: [{square, letter, blank,
@@ -260,6 +443,7 @@ func _flush() -> void:
 		var err := _ws.send_text(text)
 		if err != OK:
 			last_error = "flush failed: %s" % err
+			_on_socket_lost()
 			return
 		_outbox.pop_front()
 
