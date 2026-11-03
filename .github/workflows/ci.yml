@@ -267,6 +267,79 @@ jobs:
             echo "smoke log not found: /tmp/ws_smoke.log"
           fi
 
+  web-e2e:
+    name: Web end-to-end
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Godot 4.7.2
+        run: |
+          set -euxo pipefail
+          GODOT_VERSION="4.7.2-stable"
+          ASSET="Godot_v${GODOT_VERSION}_linux.x86_64.zip"
+          curl -fSL -o /tmp/godot.zip \
+            "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}/${ASSET}"
+          sudo unzip -o /tmp/godot.zip -d /usr/local/bin
+          sudo mv /usr/local/bin/Godot_v${GODOT_VERSION}_linux.x86_64 /usr/local/bin/godot
+          sudo chmod +x /usr/local/bin/godot
+          rm /tmp/godot.zip
+          godot --version
+
+      - name: Import
+        timeout-minutes: 5
+        run: godot --headless --path . --import
+
+      - name: Static serve plus scripted play and reload resume
+        timeout-minutes: 5
+        run: |
+          set -euxo pipefail
+          godot --headless --path . > /tmp/godot_web_server.log 2>&1 &
+          SERVER_PID=$!
+          WEB_PID=""
+          cleanup() {
+            if [ -n "$WEB_PID" ]; then kill "$WEB_PID" 2>/dev/null || true; fi
+            kill "$SERVER_PID" 2>/dev/null || true;
+          }
+          trap cleanup EXIT
+          for i in $(seq 1 30); do
+            if python3 -c "import socket; socket.create_connection(('127.0.0.1', 9080), timeout=1).close()" 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          python3 tests/serve_web.py --port 8080 > /tmp/serve_web.log 2>&1 &
+          WEB_PID=$!
+          sleep 2
+          python3 tests/web_e2e.py | tee /tmp/web_e2e.log
+          grep -q "web_moves" /tmp/web_e2e.log
+          grep -q "web_moves>=2" /tmp/web_e2e.log
+          grep -q "web_resume_identical=true" /tmp/web_e2e.log
+          grep -q "web_chat=true" /tmp/web_e2e.log
+
+      - name: Dump web-e2e logs on failure
+        if: failure()
+        timeout-minutes: 5
+        run: |
+          set -euxo pipefail
+          if [ -f /tmp/godot_web_server.log ]; then
+            cat /tmp/godot_web_server.log || true
+          else
+            echo "server log not found: /tmp/godot_web_server.log"
+          fi
+          if [ -f /tmp/serve_web.log ]; then
+            cat /tmp/serve_web.log || true
+          else
+            echo "static server log not found: /tmp/serve_web.log"
+          fi
+          if [ -f /tmp/web_e2e.log ]; then
+            cat /tmp/web_e2e.log || true
+          else
+            echo "e2e log not found: /tmp/web_e2e.log"
+          fi
+
   export-check:
     name: Export check
     runs-on: ubuntu-latest
