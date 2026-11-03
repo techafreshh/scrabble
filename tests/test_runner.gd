@@ -17,6 +17,15 @@ func _initialize() -> void:
 		if call("test_board_suite") != true:
 			failed += 1
 			push_error("FAIL test_board_suite: did not finish (runtime error?)")
+	elif suite == "dictionary":
+		for t: String in [
+			"test_dictionary_load",
+			"test_dictionary_lookup",
+			"test_dictionary_pluggable_path",
+		]:
+			if call(t) != true:
+				failed += 1
+				push_error("FAIL %s: did not finish (runtime error?)" % t)
 	else:
 		for t: String in [
 			"test_engine_version",
@@ -26,6 +35,9 @@ func _initialize() -> void:
 			"test_ping_reject",
 			"test_bag_suite",
 			"test_board_suite",
+			"test_dictionary_load",
+			"test_dictionary_lookup",
+			"test_dictionary_pluggable_path",
 		]:
 			if call(t) != true:
 				failed += 1
@@ -100,7 +112,60 @@ func _get_suite_filter() -> String:
 			return "bag"
 		if arg == "board":
 			return "board"
+		if arg == "dictionary":
+			return "dictionary"
 	return ""
+
+
+func test_dictionary_load() -> bool:
+	var dict := WordDictionary.new()
+	var start_ms: int = Time.get_ticks_msec()
+	var count: int = dict.load_from_path(WordDictionary.DEFAULT_PATH)
+	var elapsed_ms: int = Time.get_ticks_msec() - start_ms
+	print("dict_count=%d" % count)
+	print("dict_load_ms=%d" % elapsed_ms)
+	assert_true(FileAccess.file_exists(WordDictionary.DEFAULT_PATH), "dictionary_file_exists")
+	assert_true(FileAccess.file_exists("res://dictionaries/LICENSE-credit.md"), "dictionary_credit_exists")
+	var credit := FileAccess.open("res://dictionaries/LICENSE-credit.md", FileAccess.READ)
+	if credit == null:
+		assert_true(false, "dictionary_credit_readable")
+	else:
+		var text: String = credit.get_as_text()
+		assert_true(text.find("SOWPODS") != -1, "dictionary_credit_names_sowpods")
+	assert_true(count >= 200000, "dictionary_count_ge_200000")
+	assert_eq(dict.word_count(), count, "dictionary_word_count_matches")
+	assert_true(elapsed_ms < 3000, "dictionary_load_under_3s")
+	return true
+
+
+func test_dictionary_lookup() -> bool:
+	var dict := WordDictionary.new()
+	dict.load_from_path(WordDictionary.DEFAULT_PATH)
+	assert_true(dict.is_word("HELLO"), "dictionary_hit_upper")
+	assert_true(dict.is_word("hello"), "dictionary_hit_lower")
+	assert_true(dict.is_word("  HeLLo  "), "dictionary_hit_padded_mixed_case")
+	assert_eq(dict.is_word("ZZZZZZZZ"), false, "dictionary_miss_nonsense")
+	assert_eq(dict.is_word(""), false, "dictionary_miss_empty")
+	assert_eq(dict.is_word("   "), false, "dictionary_miss_blank")
+	return true
+
+
+func test_dictionary_pluggable_path() -> bool:
+	var tmp_path := "user://dict_pluggable_test.txt"
+	var out := FileAccess.open(tmp_path, FileAccess.WRITE)
+	if out == null:
+		assert_true(false, "dictionary_tmp_writable")
+		return true
+	out.store_string("Apple\nBANANA\n")
+	out.close()
+	var dict := WordDictionary.new()
+	var count: int = dict.load_from_path(tmp_path)
+	assert_eq(count, 2, "dictionary_pluggable_count_2")
+	assert_eq(dict.word_count(), 2, "dictionary_pluggable_word_count_2")
+	assert_true(dict.is_word("apple"), "dictionary_pluggable_hit_lower")
+	assert_true(dict.is_word("BANANA"), "dictionary_pluggable_hit_upper")
+	assert_eq(dict.is_word("CHERRY"), false, "dictionary_pluggable_miss")
+	return true
 
 
 func test_bag_suite() -> bool:
