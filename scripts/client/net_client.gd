@@ -377,6 +377,20 @@ func start_game() -> void:
 	_send({"v": PROTOCOL_VERSION, "m": "start_game", "code": code, "token": token})
 
 
+func rematch_room() -> void:
+	_send({"v": PROTOCOL_VERSION, "m": "rematch", "code": code, "token": token})
+
+
+# Rematch view binding (bind_overlay idiom): connects rematch_requested
+# to rematch_room only when the view actually offers that signal.
+func bind_rematch(view) -> void:
+	if view == null:
+		return
+	if view.has_signal("rematch_requested") \
+			and not view.is_connected("rematch_requested", rematch_room):
+		view.connect("rematch_requested", rematch_room)
+
+
 func place_tiles(tiles: Array) -> void:
 	_send({"v": PROTOCOL_VERSION, "m": "place_tiles", "code": code, "token": token, "tiles": tiles})
 

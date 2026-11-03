@@ -77,6 +77,10 @@ func _initialize() -> void:
 		if call("test_bot_gen_suite") != true:
 			failed += 1
 			push_error("FAIL test_bot_gen_suite: did not finish (runtime error?)")
+	elif suite == "polish":
+		if call("test_polish_suite") != true:
+			failed += 1
+			push_error("FAIL test_polish_suite: did not finish (runtime error?)")
 	elif suite == "dictionary":
 		for t: String in [
 			"test_dictionary_load",
@@ -113,6 +117,7 @@ func _initialize() -> void:
 			"test_net_client_suite",
 			"test_reconnect_suite",
 			"test_bot_gen_suite",
+			"test_polish_suite",
 		]:
 			if call(t) != true:
 				failed += 1
@@ -213,6 +218,8 @@ func _get_suite_filter() -> String:
 			return "export"
 		if arg == "bot_gen" or arg == "botgen":
 			return "bot_gen"
+		if arg == "polish":
+			return "polish"
 	return ""
 
 
@@ -369,4 +376,10 @@ func test_export_suite() -> bool:
 func test_bot_gen_suite() -> bool:
 	var bot_gen_tests: GDScript = load("res://tests/test_bot_gen.gd")
 	bot_gen_tests.run_all(self)
+	return true
+
+
+func test_polish_suite() -> bool:
+	var polish_tests: GDScript = load("res://tests/test_polish.gd")
+	polish_tests.run_all(self)
 	return true

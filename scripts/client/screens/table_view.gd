@@ -66,6 +66,12 @@ func _ensure_built() -> void:
 			rack.tile_chosen.connect(_on_tile_chosen)
 	if play_btn != null and not play_btn.pressed.is_connected(_on_play_button):
 		play_btn.pressed.connect(_on_play_button)
+	var mute_btn := get_node_or_null("%MuteButton") as Button
+	if mute_btn == null:
+		mute_btn = get_node_or_null("MuteButton") as Button
+	if mute_btn != null and not mute_btn.pressed.is_connected(_on_mute_button):
+		mute_btn.pressed.connect(_on_mute_button)
+	_refresh_mute_label()
 	_built = true
 	_refresh_chrome()
 
@@ -153,6 +159,8 @@ func commit_move(placements: Array, blank_map: Dictionary = {}) -> Dictionary:
 	var res := _game.place(placements, blank_map)
 	if bool(res.get("ok", false)):
 		_last_reject_text = ""
+		CommitFx.new().play_commit()
+		_play_node("ThunkPlayer")
 		sync_rack_to_controller()
 	else:
 		_last_reject_text = CommitFx.reject_text_for(res)
@@ -203,6 +211,30 @@ func pass_turn() -> Dictionary:
 # Mounts the reconnect overlay as a hidden top-level child and binds it to
 # the Net autoload. Guarded by resource/node lookups so offline hot-seat
 # (or a headless tree without Net) never shows it and never raises.
+func _on_mute_button() -> void:
+	SoundBank.new().toggle_muted()
+	_refresh_mute_label()
+
+
+# Mute label follows the persisted SoundBank state (guarded: the button
+# only exists in the full table scene).
+func _refresh_mute_label() -> void:
+	var mute_btn := get_node_or_null("%MuteButton") as Button
+	if mute_btn == null:
+		mute_btn = get_node_or_null("MuteButton") as Button
+	if mute_btn == null:
+		return
+	mute_btn.text = "Sound: Off" if SoundBank.new().is_muted() else "Sound: On"
+
+
+# Audible commit/finish players from the table scene (guarded: hot-seat
+# unit instances built without the scene simply skip the sound).
+func _play_node(node_name: String) -> void:
+	var player := get_node_or_null(node_name) as AudioStreamPlayer
+	if player != null:
+		player.play()
+
+
 func _maybe_mount_reconnect_overlay() -> void:
 	if get_node_or_null("ReconnectOverlay") != null:
 		return
@@ -242,6 +274,8 @@ func _maybe_finish() -> void:
 	if _game == null or not _game.is_over():
 		return
 	var winner := get_winner_name()
+	CommitFx.new().play_win()
+	_play_node("FanfarePlayer")
 	print("hotseat_winner=" + winner)
 	game_finished.emit(winner)
 

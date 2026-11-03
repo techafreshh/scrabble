@@ -39,6 +39,10 @@ func play_commit() -> bool:
 	return SoundBank.new().play("thunk")
 
 
+func play_win() -> bool:
+	return SoundBank.new().play("fanfare")
+
+
 func bounce(board_view, controller = null) -> void:
 	if board_view != null and (board_view as Object).has_method("clear_pending"):
 		(board_view as Object).call("clear_pending")

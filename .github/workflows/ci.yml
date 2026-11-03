@@ -37,6 +37,15 @@ jobs:
         timeout-minutes: 5
         run: godot --headless --path . --script res://tests/test_runner.gd
 
+      - name: Bot soak (20 games)
+        timeout-minutes: 5
+        run: |
+          set -euxo pipefail
+          godot --headless --path . -s res://tests/bot_soak.gd --games 20 2>&1 | tee /tmp/bot_soak.log
+          grep -q "soak_games=20" /tmp/bot_soak.log
+          grep -q "soak_recaps=20" /tmp/bot_soak.log
+          grep -q "illegal_states=0" /tmp/bot_soak.log
+
       - name: Probe dev server
         timeout-minutes: 5
         run: |

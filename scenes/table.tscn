@@ -1,4 +1,4 @@
-[gd_scene load_steps=7 format=3]
+[gd_scene load_steps=9 format=3]
 
 [ext_resource type="Script" path="res://scripts/client/screens/table_view.gd" id="1"]
 [ext_resource type="PackedScene" path="res://scenes/table/player_strip.tscn" id="2"]
@@ -6,6 +6,8 @@
 [ext_resource type="PackedScene" path="res://scenes/table/rack.tscn" id="4"]
 [ext_resource type="PackedScene" path="res://scenes/table/chat.tscn" id="5"]
 [ext_resource type="PackedScene" path="res://scenes/table/blank_picker.tscn" id="6"]
+[ext_resource type="AudioStream" path="res://assets/sounds/thunk.wav" id="7"]
+[ext_resource type="AudioStream" path="res://assets/sounds/fanfare.wav" id="8"]
 
 [node name="HotseatTable" type="Control"]
 layout_mode = 3
@@ -74,6 +76,27 @@ offset_bottom = -16.0
 grow_horizontal = 2
 grow_vertical = 0
 text = "Play"
+
+[node name="MuteButton" type="Button" parent="."]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 32.0
+offset_top = -88.0
+offset_right = 152.0
+offset_bottom = -56.0
+grow_horizontal = 2
+grow_vertical = 0
+text = "Sound: On"
+
+[node name="ThunkPlayer" type="AudioStreamPlayer" parent="."]
+stream = ExtResource("7")
+
+[node name="FanfarePlayer" type="AudioStreamPlayer" parent="."]
+stream = ExtResource("8")
 
 [node name="StatusLabel" type="Label" parent="."]
 unique_name_in_owner = true
