@@ -18,6 +18,7 @@ static func run_all(runner: SceneTree) -> void:
 	_game_bag_empty(runner)
 	_game_six_scoreless(runner)
 	_game_exchange_and_rematch(runner)
+	_game_record_score_exact_tiles(runner)
 	print("scripted_games=3")
 
 
@@ -111,3 +112,102 @@ static func _game_exchange_and_rematch(runner: SceneTree) -> void:
 	var total: int = game.bag_remaining() + game.rack_tile_count(0) + game.rack_tile_count(1)
 	runner.assert_eq(total, 100, "game_rematch_total_100")
 	print("rematch_bag=100")
+
+
+# Rack-identity checks for record_score's exact-face path: non-front
+# letters, duplicate faces, blank consumption, mismatch/shortage
+# rejection, and the legacy count fallback. All racks/bags pinned.
+static func _game_record_score_exact_tiles(runner: SceneTree) -> void:
+	# Non-front letters: C/A/T sit mid-rack; the exact path keeps X/D/E/F.
+	var game := ScrabbleGame.new(2, 5)
+	game.debug_set_rack(0, ["X", "C", "A", "T", "D", "E", "F"])
+	var full: Array = []
+	for i: int in range(100):
+		full.append("E")
+	game.debug_set_bag(full)
+	var res: Dictionary = game.record_score(5, 3, ["C", "A", "T"])
+	runner.assert_true(bool(res.get("ok", false)), "game_exact_nonfront_ok")
+	var leftover: Array = game.rack_letters(0).duplicate()
+	leftover.sort()
+	runner.assert_eq(leftover, ["D", "E", "E", "E", "E", "F", "X"], "game_exact_nonfront_keeps_unplayed")
+	runner.assert_eq(game.score_of(0), 5, "game_exact_nonfront_banks")
+	runner.assert_eq(game.current_player(), 1, "game_exact_nonfront_advances_turn")
+
+	# Duplicate faces: two A tiles, only one consumed (lowercase + padding
+	# also proves the face normalization).
+	var dup := ScrabbleGame.new(2, 6)
+	dup.debug_set_rack(0, ["A", "A", "B", "C", "D", "E", "F"])
+	var zbag: Array = []
+	for i: int in range(50):
+		zbag.append("Z")
+	dup.debug_set_bag(zbag)
+	var rdup: Dictionary = dup.record_score(4, 1, [" a "])
+	runner.assert_true(bool(rdup.get("ok", false)), "game_exact_duplicate_ok")
+	var drack: Array = dup.rack_letters(0)
+	var acount := 0
+	for face in drack:
+		if str(face) == "A":
+			acount += 1
+	runner.assert_eq(acount, 1, "game_exact_duplicate_consumes_one")
+	runner.assert_true(drack.has("Z"), "game_exact_duplicate_refills")
+
+	# Blank consumption: a blank placement consumes the blank tile, not
+	# the same-face letter tile.
+	var bl := ScrabbleGame.new(2, 7)
+	bl.debug_set_rack(0, ["", "E", "A", "B", "C", "D", "F"])
+	var ebag: Array = []
+	for i: int in range(50):
+		ebag.append("Z")
+	bl.debug_set_bag(ebag)
+	var rbl: Dictionary = bl.record_score(3, 1, [{"letter": "E", "blank": true}])
+	runner.assert_true(bool(rbl.get("ok", false)), "game_exact_blank_ok")
+	var brack: Array = bl.rack_letters(0)
+	runner.assert_true(brack.has("E"), "game_exact_blank_keeps_letter_e")
+	runner.assert_true(not brack.has(""), "game_exact_blank_consumes_blank")
+
+	# Bare-string blank face ("") also consumes a blank tile.
+	var bs := ScrabbleGame.new(2, 8)
+	bs.debug_set_rack(0, ["", "Q", "A", "B", "C", "D", "F"])
+	var qbag: Array = []
+	for i: int in range(50):
+		qbag.append("Z")
+	bs.debug_set_bag(qbag)
+	var rbs: Dictionary = bs.record_score(2, 1, [""])
+	runner.assert_true(bool(rbs.get("ok", false)), "game_exact_bare_blank_ok")
+	var bsrack: Array = bs.rack_letters(0)
+	runner.assert_true(bsrack.has("Q"), "game_exact_bare_blank_keeps_q")
+	runner.assert_true(not bsrack.has(""), "game_exact_bare_blank_consumed")
+
+	# Size mismatch: played.size() != tiles_played rejects untouched.
+	var mm := ScrabbleGame.new(2, 9)
+	mm.debug_set_rack(0, ["C", "A", "T", "D", "E", "F", "G"])
+	var mbag: Array = []
+	for i: int in range(40):
+		mbag.append("E")
+	mm.debug_set_bag(mbag)
+	var rack_before: Array = mm.rack_letters(0)
+	var bag_before: int = mm.bag_remaining()
+	var rmm: Dictionary = mm.record_score(5, 3, ["C", "A"])
+	runner.assert_eq(bool(rmm.get("ok", true)), false, "game_exact_mismatch_rejected")
+	runner.assert_eq(str(rmm.get("reason", "")), "BAD_PLAY", "game_exact_mismatch_reason")
+	runner.assert_eq(mm.rack_letters(0), rack_before, "game_exact_mismatch_rack_unchanged")
+	runner.assert_eq(mm.bag_remaining(), bag_before, "game_exact_mismatch_bag_unchanged")
+	runner.assert_eq(mm.score_of(0), 0, "game_exact_mismatch_score_unchanged")
+	runner.assert_eq(mm.current_player(), 0, "game_exact_mismatch_turn_unchanged")
+
+	# Shortage: a played face absent from the rack rejects untouched.
+	var rshort: Dictionary = mm.record_score(5, 1, ["Z"])
+	runner.assert_eq(bool(rshort.get("ok", true)), false, "game_exact_shortage_rejected")
+	runner.assert_eq(str(rshort.get("reason", "")), "BAD_PLAY", "game_exact_shortage_reason")
+	runner.assert_eq(mm.rack_letters(0), rack_before, "game_exact_shortage_rack_unchanged")
+	runner.assert_eq(mm.bag_remaining(), bag_before, "game_exact_shortage_bag_unchanged")
+	runner.assert_eq(mm.score_of(0), 0, "game_exact_shortage_score_unchanged")
+	runner.assert_eq(mm.current_player(), 0, "game_exact_shortage_turn_unchanged")
+
+	# Legacy count path: no third argument still drops from the front.
+	var leg := ScrabbleGame.new(2, 11)
+	leg.debug_set_rack(0, ["X", "C", "A", "T", "D", "E", "F"])
+	leg.debug_set_bag([])
+	var rleg: Dictionary = leg.record_score(5, 2)
+	runner.assert_true(bool(rleg.get("ok", false)), "game_exact_legacy_ok")
+	runner.assert_eq(leg.rack_letters(0), ["A", "T", "D", "E", "F"], "game_exact_legacy_pops_front")
