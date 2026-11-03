@@ -27,6 +27,7 @@ stdlib-only driver `tests/ws_probe.py` speaks exactly this surface.
 |---|---|---|---|
 | `create_room` | `name` | New room, caller is seat 0 (host) | `code`, `token`, `seat: 0`, `seats: 1` |
 | `join_room` | `code`, `name`, optional `token` | Known `token` re-seats (rejoin); otherwise a fresh seat | `code`, `token`, `seat`/`you`, `seats` |
+| `rejoin` (`resync`) | `code`+`token` | Strict token rejoin: unknown `token` answers `BAD_TOKEN` and never mints a seat | full snapshot: `seat`/`you`, `started`, `turn`, `scores`, own `rack`, `board_tiles`, `over`, `ending`, `seats_list` |
 | `add_bot` | host `code`+`token` | Seats the `Botgomery` stub (never moves) | `bot_seat`, `seats` |
 | `remove_bot` | host `code`+`token`, optional `seat` | Removes one bot seat (default: last) | `seats` |
 | `start_game` | host `code`+`token` | Builds one `LocalGame` for the seats | `started: true`, `turn`, `scores` |
@@ -88,6 +89,7 @@ private to their owners.
 
 `NO_ROOM` (unknown code), `ROOM_FULL` (4 seats taken), `NOT_HOST`
 (host-only action by a guest token), `NO_TOKEN` (token is not a seat),
+`BAD_TOKEN` (rejoin with an unknown `token`),
 `BAD_STATE` (e.g. double `start_game`, fresh join after start, move
 before start, debug pins on a live room), `NOT_YOUR_TURN` (intent from a
 seat that does not hold the turn), `NEED_OPPONENT` (solo `start_game`), `BAD_JSON`

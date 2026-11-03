@@ -20,7 +20,7 @@ const PROTOCOL_VERSION := 1
 const BOT_NAME := "Botgomery"
 
 const KNOWN_METHODS := [
-	"create_room", "join_room", "add_bot", "remove_bot", "start_game",
+	"create_room", "join_room", "rejoin", "resync", "add_bot", "remove_bot", "start_game",
 	"place_tiles", "place", "pass", "pass_turn", "exchange", "recall",
 	"shuffle_rack", "shuffle", "chat", "emote",
 	"get_rack", "rack", "debug_set_rack", "debug_set_bag",
@@ -120,6 +120,46 @@ func join_room(code: String, player_name: String, token: String = "") -> Diction
 		"you": seat_no, "token": fresh, "session": fresh,
 		"seats": seats.size(), "seat_count": seats.size(),
 		"started": false, "seats_list": _public_seats(room),
+	}
+
+
+# Strict token rejoin with a full-state resync snapshot. Unknown rooms
+# answer NO_ROOM; an unknown token (empty or wrong alike) answers exactly
+# BAD_TOKEN and never mints a seat, so a typo cannot steal or grow the
+# table. A known token restores the caller's seat with their own private
+# rack plus the shared board, scores, turn, and ending state.
+func rejoin(code: String, token: String) -> Dictionary:
+	var room := _get_room(code)
+	if room.is_empty():
+		return _gate_error("rejoin", "NO_ROOM")
+	if _seat_by_token(room, token).is_empty():
+		return _gate_error("rejoin", "BAD_TOKEN")
+	var me := _seat_no(room, token)
+	var game = room.get("game", null)
+	var turn := 0
+	var scores: Array = []
+	var rack: Array = []
+	var tiles: Array = []
+	var over := false
+	var ending := ""
+	if game is LocalGame:
+		turn = (game as LocalGame).current_player()
+		scores = (game as LocalGame).scores()
+		over = (game as LocalGame).is_over()
+		ending = (game as LocalGame).ending()
+		if bool(room.get("started", false)):
+			rack = rack_for_seat(str(room["code"]), me)
+			tiles = (game as LocalGame).board_tiles()
+	var seats: Array = room.get("seats", [])
+	return {
+		"ok": true, "m": "rejoin", "code": str(room["code"]),
+		"room": str(room["code"]), "seat": me, "player_id": me, "you": me,
+		"token": str(token).strip_edges(), "session": str(token).strip_edges(),
+		"seats": seats.size(), "seat_count": seats.size(),
+		"started": bool(room.get("started", false)),
+		"turn": turn, "scores": scores, "rack": rack,
+		"board_tiles": tiles, "over": over, "ending": ending,
+		"seats_list": _public_seats(room),
 	}
 
 
@@ -512,6 +552,7 @@ func poll_timers(now_ms: int) -> Array:
 		GameBinding.refresh_deadline(room as Dictionary, int(now_ms))
 		var frame: Dictionary = game.state_delta()
 		frame["code"] = str((room as Dictionary).get("code", key))
+		frame["board_tiles"] = game.board_tiles()
 		frame["auto_pass"] = true
 		out.append(frame)
 	return out
@@ -603,6 +644,13 @@ func handle_dict(req: Dictionary) -> Array:
 			})
 			frames.append(_seat_update(str(reply.get("code", ""))))
 			return frames
+		"rejoin", "resync":
+			var reply := rejoin(
+				_str_field(req, ["code", "room", "room_code"], ""),
+				_str_field(req, ["token", "session", "session_token"], "")
+			)
+			reply["m"] = m_raw
+			return [reply]
 		"add_bot":
 			var reply := add_bot(
 				_str_field(req, ["code", "room", "room_code"], ""),
@@ -921,6 +969,7 @@ func _state_sync(code: String) -> Dictionary:
 		sync["scores"] = (game as LocalGame).scores()
 		sync["over"] = (game as LocalGame).is_over()
 		sync["ending"] = (game as LocalGame).ending()
+		sync["board_tiles"] = (game as LocalGame).board_tiles()
 	return sync
 
 
@@ -930,12 +979,15 @@ func _turn_frame(code: String, reply: Dictionary) -> Dictionary:
 	if delta is Dictionary and str((delta as Dictionary).get("m", "")) != "":
 		var frame: Dictionary = (delta as Dictionary).duplicate(true)
 		frame["code"] = code
+		if not room.is_empty() and room.get("game", null) is LocalGame:
+			frame["board_tiles"] = (room["game"] as LocalGame).board_tiles()
 		return frame
 	if room.is_empty() or room.get("game") == null:
 		return {"m": "turn_update", "code": code}
 	var game: LocalGame = room["game"]
 	var frame: Dictionary = game.state_delta()
 	frame["code"] = code
+	frame["board_tiles"] = game.board_tiles()
 	return frame
 
 
