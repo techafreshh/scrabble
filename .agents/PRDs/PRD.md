@@ -218,7 +218,7 @@ This PRD is delivered through the pi-dark-factory: each numbered task below beco
 - **T12** Blank letter-picker; commit thunk + score-fly; reject bounce-back + inline message.
 - **T13** Player strip (active glow + timer ring), chat bubble + emotes (local echo), sounds + mute.
 - **T14** Start / lobby / recap screens + full hot-seat playable loop (end-to-end on desktop + phone viewport).
-- **T15** Server harness: headless boot, `WebSocketMultiplayerPeer` listener, rooms, session tokens, versioned RPC surface (§10).
+- **T15** Server harness: headless boot, `WebSocketMultiplayerPeer` listener, rooms, session tokens, versioned RPC surface (§10); ships a stdlib-only Python WS test client (`tests/ws_probe.py`: handshake, room join, scripted moves, event assertions) used by CI, smoke tests, and the factory's black-box scenario probes.
 - **T16** Server–Game binding: intents→facade, per-peer private state, timers (90 s default, 3-min stall guard), auto-pass, scoreless counting.
 - **T17** Client Net autoload: connect/join, full `state_sync` + deltas into the same event bus P2's UI consumes.
 - **T18** Reconnect UX: overlay, auto-retry backoff, token rejoin, web-refresh resume.
