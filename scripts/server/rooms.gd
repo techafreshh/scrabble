@@ -21,6 +21,7 @@ const BOT_NAME := "Botgomery"
 
 const KNOWN_METHODS := [
 	"create_room", "join_room", "rejoin", "resync", "add_bot", "remove_bot", "start_game",
+	"rematch",
 	"place_tiles", "place", "pass", "pass_turn", "exchange", "recall",
 	"shuffle_rack", "shuffle", "chat", "emote",
 	"get_rack", "rack", "debug_set_rack", "debug_set_bag",
@@ -266,6 +267,42 @@ func start_game(code: String, token: String) -> Dictionary:
 		"seats_list": _public_seats(room),
 	}
 	return GameBinding.personalize(reply, _seat_no(room, token), game.rack_letters(_seat_no(room, token)))
+
+
+# Fresh deal after a finished game: host-only, same seats, full bag.
+# Requires a started, over game (BAD_STATE otherwise), mirroring
+# start_game's reply shape so clients resync the same way.
+func rematch(code: String, token: String) -> Dictionary:
+	var room := _get_room(code)
+	if room.is_empty():
+		return _gate_error("rematch", "NO_ROOM")
+	if _seat_by_token(room, token).is_empty():
+		return _gate_error("rematch", "NO_TOKEN")
+	if not _is_host(room, token):
+		return _gate_error("rematch", "NOT_HOST")
+	if not bool(room.get("started", false)) or room.get("game", null) == null:
+		return _gate_error("rematch", "BAD_STATE")
+	var old: LocalGame = room["game"]
+	if not old.is_over():
+		return _gate_error("rematch", "BAD_STATE")
+	var seats: Array = room["seats"]
+	var seed := _rng.randi()
+	var game := LocalGame.new(seats.size(), seed, _lexicon)
+	room["game"] = game
+	room["seed"] = seed
+	GameBinding.refresh_deadline(room, _clock_ms())
+	_arm_bot(room, _clock_ms())
+	var delta: Dictionary = game.state_delta()
+	var me := _seat_no(room, token)
+	var reply := {
+		"ok": true, "m": "rematch", "code": str(room["code"]),
+		"started": true, "turn": game.current_player(),
+		"seats": seats.size(), "seat_count": seats.size(),
+		"scores": game.scores(), "over": game.is_over(),
+		"ending": game.ending(), "delta": delta,
+		"seats_list": _public_seats(room),
+	}
+	return GameBinding.personalize(reply, me, game.rack_letters(me))
 
 
 # tiles: [{square: "H8", letter: "Q", blank_as: ""}] with col/row/letter
@@ -751,6 +788,15 @@ func handle_dict(req: Dictionary) -> Array:
 			return [reply, _seat_update(str(reply.get("code", "")))]
 		"start_game":
 			var reply := start_game(
+				_str_field(req, ["code", "room", "room_code"], ""),
+				_str_field(req, ["token", "session", "session_token"], "")
+			)
+			reply["m"] = m_raw
+			if not bool(reply.get("ok", false)):
+				return [reply]
+			return [reply, _state_sync(str(reply.get("code", "")))]
+		"rematch":
+			var reply := rematch(
 				_str_field(req, ["code", "room", "room_code"], ""),
 				_str_field(req, ["token", "session", "session_token"], "")
 			)

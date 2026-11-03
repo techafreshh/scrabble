@@ -31,6 +31,7 @@ stdlib-only driver `tests/ws_probe.py` speaks exactly this surface.
 | `add_bot` | host `code`+`token` | Seats `Botgomery` (`is_bot: true` in `seats_list`); when the turn reaches a bot seat the server commits one `BotSeat` greedy-crossword move after a deterministic 5–15 s think delay (seeded per turn, `5 + abs(seed) % 11`; broadcast as `turn_update`/`game_over` with `bot_move: true`), passing (`recall` then `pass_turn`) when no legal move exists | `bot` (`Botgomery`), `bot_seat`, `seat` (`Botgomery`), `bot_seated: true`, `seats` |
 | `remove_bot` | host `code`+`token`, optional `seat` | Removes one bot seat (default: last) | `seats` |
 | `start_game` | host `code`+`token` | Builds one `LocalGame` for the seats | `started: true`, `turn`, `scores` |
+| `rematch` | host `code`+`token` | Fresh deal after a finished game (same seats, full bag) | `started: true`, `turn`, `scores` |
 | `place_tiles` (`place`) | turn seat's `code`+`token`, `tiles` | Facade `place` (active seat only); `tiles: [{square: "H8", letter: "Q", blank_as: ""}]` (`{col,row,letter,blank}` dicts also accepted) | `accepted: true`, `points` (= `total`), `turn`, `scores`, `over` |
 | `pass` (`pass_turn`) | turn seat's `code`+`token` | Facade `pass_turn` | `accepted: true`, `turn` |
 | `exchange` | turn seat's `code`+`token`, `count` | Facade `exchange` | `accepted: true`, `turn` |
@@ -52,8 +53,8 @@ top level) and defaults to true; `timer_off: true` negates it. The
 per-turn limit resolves from the first present key among `turn_secs`,
 `timer_secs`, `turn_timeout`, `timeout_secs`, `turn_limit_secs` (top level
 or inside `options`), clamped 1–3600 — else 90 s with the clock on, else
-the 180 s stall guard with it off. The deadline refreshes on `start_game`
-and after every successful `place_tiles`/`pass_turn`/`exchange`/auto-pass.
+the 180 s stall guard with it off. The deadline refreshes on `start_game`,
+`rematch`, and after every successful `place_tiles`/`pass_turn`/`exchange`/auto-pass.
 When a started, non-over room's deadline passes, the server auto-passes
 the turn seat (facade `recall` then `pass_turn`) and broadcasts the
 resulting `turn_update`/`game_over` with `auto_pass: true`; every pass —

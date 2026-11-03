@@ -146,7 +146,7 @@ func apply_server_frame(frame: Dictionary) -> String:
 			_sync_state_fields(frame)
 			return "rack"
 		"create_room", "join_room", "room_created", "room_joined", "seat_update", \
-		"start_game", "place_tiles", "place", "pass", "pass_turn", "exchange", \
+		"start_game", "rematch", "place_tiles", "place", "pass", "pass_turn", "exchange", \
 		"recall", "shuffle_rack", "shuffle", "debug_set_rack", "debug_set_bag", \
 		"add_bot", "remove_bot":
 			_sync_state_fields(frame)
