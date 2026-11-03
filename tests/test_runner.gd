@@ -45,6 +45,10 @@ func _initialize() -> void:
 		if call("test_strip_chat_suite") != true:
 			failed += 1
 			push_error("FAIL test_strip_chat_suite: did not finish (runtime error?)")
+	elif suite == "blank_feedback":
+		if call("test_blank_feedback_suite") != true:
+			failed += 1
+			push_error("FAIL test_blank_feedback_suite: did not finish (runtime error?)")
 	elif suite == "dictionary":
 		for t: String in [
 			"test_dictionary_load",
@@ -73,6 +77,7 @@ func _initialize() -> void:
 			"test_facade_suite",
 			"test_placement_suite",
 			"test_strip_chat_suite",
+			"test_blank_feedback_suite",
 		]:
 			if call(t) != true:
 				failed += 1
@@ -159,6 +164,8 @@ func _get_suite_filter() -> String:
 			return "placement"
 		if arg == "strip_chat":
 			return "strip_chat"
+		if arg == "blank_feedback":
+			return "blank_feedback"
 	return ""
 
 
@@ -267,4 +274,10 @@ func test_placement_suite() -> bool:
 func test_strip_chat_suite() -> bool:
 	var strip_chat_tests: GDScript = load("res://tests/test_strip_chat.gd")
 	strip_chat_tests.run_all(self)
+	return true
+
+
+func test_blank_feedback_suite() -> bool:
+	var blank_feedback_tests: GDScript = load("res://tests/test_blank_feedback.gd")
+	blank_feedback_tests.run_all(self)
 	return true
