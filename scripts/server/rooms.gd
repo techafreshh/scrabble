@@ -77,6 +77,7 @@ func create_room(player_name: String, options: Dictionary = {}) -> Dictionary:
 		"turn_secs": GameBinding.parse_turn_secs(options),
 		"test_mode": GameBinding.parse_test_mode(options),
 		"deadline_ms": -1,
+		"bot_deadline_ms": -1,
 	}
 	_rooms[code] = room
 	return {
@@ -253,6 +254,7 @@ func start_game(code: String, token: String) -> Dictionary:
 	room["started"] = true
 	room["seed"] = seed
 	GameBinding.refresh_deadline(room, _clock_ms())
+	_arm_bot(room, _clock_ms())
 	var delta: Dictionary = game.state_delta()
 	var reply := {
 		"ok": true, "m": "start_game", "code": str(room["code"]),
@@ -297,6 +299,7 @@ func place_tiles(code: String, token: String, tiles: Array) -> Dictionary:
 			"over": game.is_over(), "ending": game.ending(),
 		}
 	GameBinding.refresh_deadline(room, _clock_ms())
+	_arm_bot(room, _clock_ms())
 	var total := int(res.get("total", 0))
 	var reply := {
 		"ok": true, "m": "place_tiles", "code": str(room["code"]),
@@ -336,6 +339,7 @@ func pass_turn(code: String, token: String) -> Dictionary:
 			"over": game.is_over(), "ending": game.ending(),
 		}
 	GameBinding.refresh_deadline(room, _clock_ms())
+	_arm_bot(room, _clock_ms())
 	var reply := {
 		"ok": true, "m": "pass", "code": str(room["code"]),
 		"kind": "pass", "reason": "OK", "accepted": true,
@@ -369,6 +373,7 @@ func exchange(code: String, token: String, count: int) -> Dictionary:
 			"over": game.is_over(), "ending": game.ending(),
 		}
 	GameBinding.refresh_deadline(room, _clock_ms())
+	_arm_bot(room, _clock_ms())
 	var reply := {
 		"ok": true, "m": "exchange", "code": str(room["code"]),
 		"kind": "exchange", "reason": "OK", "accepted": true,
@@ -545,6 +550,8 @@ func poll_timers(now_ms: int) -> Array:
 		var game: LocalGame = (room as Dictionary)["game"]
 		if game.is_over():
 			continue
+		if _poll_bot(room as Dictionary, game, int(now_ms), out):
+			continue
 		if not GameBinding.is_expired(room as Dictionary, int(now_ms)):
 			continue
 		game.recall()
@@ -556,6 +563,71 @@ func poll_timers(now_ms: int) -> Array:
 		frame["auto_pass"] = true
 		out.append(frame)
 	return out
+
+
+# Bot think-delay branch: when the turn sits on a bot seat past its think
+# deadline, commit one ScrabbleBot move (pass fallback when none is legal),
+# refresh the clock, re-arm for the next turn, and emit the same
+# turn_update/game_over frame shape as auto-pass plus bot_move:true.
+# Returns true when it consumed this tick for the room. No new wire methods.
+func _poll_bot(room: Dictionary, game: LocalGame, now_ms: int, out: Array) -> bool:
+	if int(room.get("bot_deadline_ms", -1)) < 0:
+		return false
+	if int(now_ms) < int(room.get("bot_deadline_ms", -1)):
+		return false
+	var turn := game.current_player()
+	var seats: Array = room.get("seats", [])
+	if turn < 0 or turn >= seats.size():
+		room["bot_deadline_ms"] = -1
+		return false
+	var seat = seats[turn]
+	if not (seat is Dictionary) or not bool((seat as Dictionary).get("is_bot", false)):
+		room["bot_deadline_ms"] = -1
+		return false
+	var mv := ScrabbleBot.generate_move(game.board, game.rack_letters(turn), _lexicon, _bot_seed(room))
+	if bool(mv.get("ok", false)):
+		game.place(mv.get("placements", []), mv.get("blank_map", {}))
+	else:
+		game.recall()
+		game.pass_turn()
+	GameBinding.refresh_deadline(room, now_ms)
+	_arm_bot(room, now_ms)
+	var frame: Dictionary = game.state_delta()
+	frame["code"] = str(room.get("code", ""))
+	frame["board_tiles"] = game.board_tiles()
+	frame["bot_move"] = true
+	out.append(frame)
+	return true
+
+
+# Bot seed per turn: the room seed plus completed turns so every bot move
+# draws a fresh deterministic seed.
+func _bot_seed(room: Dictionary) -> int:
+	var h := 0
+	var game = room.get("game", null)
+	if game is LocalGame:
+		h = (game as LocalGame).history().size()
+	return int(room.get("seed", 0)) + h
+
+
+# Arms the think deadline when the turn sits on a bot seat of a live game,
+# else leaves it disarmed (-1), mirroring GameBinding.refresh_deadline.
+func _arm_bot(room: Dictionary, now_ms: int) -> void:
+	room["bot_deadline_ms"] = -1
+	if not bool(room.get("started", false)):
+		return
+	var game = room.get("game", null)
+	if not (game is LocalGame):
+		return
+	if (game as LocalGame).is_over():
+		return
+	var seats: Array = room.get("seats", [])
+	var turn := (game as LocalGame).current_player()
+	if turn < 0 or turn >= seats.size():
+		return
+	var seat = seats[turn]
+	if seat is Dictionary and bool((seat as Dictionary).get("is_bot", false)):
+		room["bot_deadline_ms"] = int(now_ms) + ScrabbleBot.think_delay_ms(_bot_seed(room))
 
 
 func chat(code: String, token: String, text: String) -> Dictionary:
