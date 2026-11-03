@@ -22,3 +22,8 @@ renderer/rendering_method="gl_compatibility"
 [gui]
 
 theme/custom="res://themes/warm_club.tres"
+
+[autoload]
+
+Bus="*res://scripts/client/event_bus.gd"
+Net="*res://scripts/client/net_client.gd"

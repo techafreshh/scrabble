@@ -115,6 +115,25 @@ jobs:
           echo "$LISTEN_OUT"
           echo "$LISTEN_OUT" | grep -q "auto_pass=true"
 
+      - name: Net client suite
+        timeout-minutes: 5
+        run: |
+          set -euxo pipefail
+          godot --headless --path . > /tmp/godot_net_server.log 2>&1 &
+          SERVER_PID=$!
+          cleanup() { kill "$SERVER_PID" 2>/dev/null || true; }
+          trap cleanup EXIT
+          for i in $(seq 1 30); do
+            if python3 -c "import socket; socket.create_connection(('127.0.0.1', 9080), timeout=1).close()" 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          godot --headless --path . --script res://tests/test_runner.gd --suite net_client 2>&1 | tee /tmp/net_client.log
+          grep -q "sync_racks=2" /tmp/net_client.log
+          grep -q "ui_reject=Not in my book:" /tmp/net_client.log
+          grep -q "chat_relay=true" /tmp/net_client.log
+
       - name: Dump server log on failure
         if: failure()
         timeout-minutes: 5
@@ -124,4 +143,10 @@ jobs:
             cat /tmp/godot_server.log || true
           else
             echo "server log not found: /tmp/godot_server.log"
+          fi
+          if [ -f /tmp/godot_net_server.log ]; then
+            cat /tmp/godot_net_server.log || true
+          fi
+          if [ -f /tmp/net_client.log ]; then
+            cat /tmp/net_client.log || true
           fi
