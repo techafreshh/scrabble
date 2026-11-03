@@ -211,6 +211,17 @@ func pass_turn() -> Dictionary:
 	}
 
 
+# Full reset for Rematch: a fresh board, a state-machine reset reusing
+# the construction seed (same seats, full 100-tile bag), and cleared
+# pending/history/events so the next game starts clean.
+func rematch() -> void:
+	board = ScrabbleBoard.new()
+	game.rematch()
+	_pending.clear()
+	_history.clear()
+	_events.clear()
+
+
 # Clears the pending buffer without touching board or game.
 func recall() -> Dictionary:
 	var me := game.current_player()
