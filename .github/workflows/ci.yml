@@ -52,3 +52,14 @@ jobs:
             sleep 1
           done
           python3 tests/ws_probe.py --ping
+
+      - name: Dump server log on failure
+        if: failure()
+        timeout-minutes: 5
+        run: |
+          set -euxo pipefail
+          if [ -f /tmp/godot_server.log ]; then
+            cat /tmp/godot_server.log || true
+          else
+            echo "server log not found: /tmp/godot_server.log"
+          fi
