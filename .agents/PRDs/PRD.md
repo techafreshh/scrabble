@@ -64,6 +64,7 @@ Pain points addressed: scheduling full-rules Scrabble with friends spread across
 - [ ] Browser (WASM, single-threaded) + Windows/Mac/Linux desktop exports from one project
 - [ ] SOWPODS word list bundled with visible credit in a pluggable one-word-per-line file format
 - [ ] Local game runs against `ws://localhost` server for dev/testing
+- [ ] **CI workflow as a first-lap deliverable**: `.github/workflows/ci.yml` that installs Godot 4.7.x headless and runs the repo's headless test suites (`tests/test_runner.gd`, later `tests/net_smoke.gd` + `tests/bot_soak.gd`) — the process exit code is the gate
 - [ ] Deployment runbook (systemd unit, Cloudflare Tunnel, domain checklist) — written, not executed
 
 ### Out of Scope (deferred)
@@ -197,6 +198,38 @@ Example — commit: `{"v":1,"m":"place_tiles","tiles":[{"square":"5F","letter":"
 | **P5 — Exports & polish** | MVP shippable from one repo | Web + Windows/Linux (+Mac) exports; sizes checked; presentation polish; **deployment runbook (drafted)** | Web export runs against local server; desktop drag-drop; recap/rematch loop verified | 3–4 d |
 
 Total: ~2–4 weeks focused effort (agreed scale). Order is deliberate: something playable exists from P2 onward, and every later phase rides on a tested core.
+
+### Build order — task-level (the slicing source; mirrors `.agents/plans/wordtable-multiplayer.plan.md`)
+
+This PRD is delivered through the pi-dark-factory: each numbered task below becomes ~one GitHub issue, in this order. Task IDs are stable identifiers; acceptance for each is its validation command in the referenced plan.
+
+- **T0** Install/pin Godot 4.7.x headless binary; `godot --headless --version` gates.
+- **T1** Godot project scaffold (Compatibility renderer, dirs per §6, `.gitignore`); `--import` exits 0.
+- **T2** Headless test runner (`tests/test_runner.gd`, SceneTree script, exit-code gate) + sample suites.
+- **T3** Tile bag (official 100-tile distribution, blanks, seeded shuffle, draw/return) + suite.
+- **T4** Board model + official premium layout Resource (star at H8; "5F"↔rc algebra; word extraction) + suite.
+- **T5** Dictionary module + fetch/credit/cleanup SOWPODS (~267k words, <3 s load).
+- **T6** Move validation + scoring (first-move rules, line/adjacency rules, premiums, blanks=0, bingo, per-failure reason classes) + hand-verified gold corpus suite.
+- **T7** Game state machine (turns, exchange ≥7 bag, pass, six-scoreless ending, bag-empty ending, tournament final scoring, rematch reset) + three full scripted games in tests.
+- **T8** Game facade `LocalGame` (intents → events seam shared by server, client, bot) + scripted 3-player game.
+- **T9** Warm-club theme + art tokens (Theme/StyleBox Resources, flat-color placeholders).
+- **T10** Board scene (15×15 Control grid, pending-tile states, last-move highlight, responsive/phone scaling).
+- **T11** Rack + placement (drag & drop + tap-tap fallback, Recall/Shuffle, live provisional score via shared validator).
+- **T12** Blank letter-picker; commit thunk + score-fly; reject bounce-back + inline message.
+- **T13** Player strip (active glow + timer ring), chat bubble + emotes (local echo), sounds + mute.
+- **T14** Start / lobby / recap screens + full hot-seat playable loop (end-to-end on desktop + phone viewport).
+- **T15** Server harness: headless boot, `WebSocketMultiplayerPeer` listener, rooms, session tokens, versioned RPC surface (§10).
+- **T16** Server–Game binding: intents→facade, per-peer private state, timers (90 s default, 3-min stall guard), auto-pass, scoreless counting.
+- **T17** Client Net autoload: connect/join, full `state_sync` + deltas into the same event bus P2's UI consumes.
+- **T18** Reconnect UX: overlay, auto-retry backoff, token rejoin, web-refresh resume.
+- **T19** Network smoke suite: headless server + 2 scripted clients, forced disconnect/resume, full legit game.
+- **T20** Bot move generator (anchors, dictionary-directed search, wildcards, ~300 ms budget, jitter, think delay) + tests.
+- **T21** Bot in rooms + seeded bot-vs-bot soak (≥20 games, 0 illegal states).
+- **T22** Exports: Web (single-threaded) + Windows/Linux presets, icons/splash, lexicon ships in PCK, size budget.
+- **T23** Web end-to-end: local static serving + local server, scripted browser play, tab-reload resume.
+- **T24** Game-feel polish sweep; deployment runbook drafted (systemd + Cloudflare Tunnel, NOT executed); portfolio README + `v0.1.0-mvp` tag.
+
+Operator-only steps (never issues: laps cannot do them) are tracked in the deployment runbook checklist: domain registration, Cloudflare/Tunnel bring-up, VPS systemd install, mobile store packaging.
 
 ## 13. Future Considerations
 
