@@ -25,6 +25,10 @@ func _initialize() -> void:
 		if call("test_game_state_suite") != true:
 			failed += 1
 			push_error("FAIL test_game_state_suite: did not finish (runtime error?)")
+	elif suite == "facade":
+		if call("test_facade_suite") != true:
+			failed += 1
+			push_error("FAIL test_facade_suite: did not finish (runtime error?)")
 	elif suite == "dictionary":
 		for t: String in [
 			"test_dictionary_load",
@@ -48,6 +52,7 @@ func _initialize() -> void:
 			"test_dictionary_pluggable_path",
 			"test_rules_suite",
 			"test_game_state_suite",
+			"test_facade_suite",
 		]:
 			if call(t) != true:
 				failed += 1
@@ -126,6 +131,8 @@ func _get_suite_filter() -> String:
 			return "dictionary"
 		if arg == "rules":
 			return "rules"
+		if arg == "facade":
+			return "facade"
 		if arg == "game_state":
 			return "game_state"
 	return ""
@@ -197,6 +204,12 @@ func test_board_suite() -> bool:
 func test_rules_suite() -> bool:
 	var rules_tests: GDScript = load("res://tests/test_rules.gd")
 	rules_tests.run_all(self)
+	return true
+
+
+func test_facade_suite() -> bool:
+	var facade_tests: GDScript = load("res://tests/test_facade.gd")
+	facade_tests.run_all(self)
 	return true
 
 
