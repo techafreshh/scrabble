@@ -8,16 +8,23 @@ var failed := 0
 
 
 func _initialize() -> void:
-	for t: String in [
-		"test_engine_version",
-		"test_project_files",
-		"test_server_default_port",
-		"test_ping_match",
-		"test_ping_reject",
-	]:
-		if call(t) != true:
+	var suite := _get_suite_filter()
+	if suite == "bag":
+		if call("test_bag_suite") != true:
 			failed += 1
-			push_error("FAIL %s: did not finish (runtime error?)" % t)
+			push_error("FAIL test_bag_suite: did not finish (runtime error?)")
+	else:
+		for t: String in [
+			"test_engine_version",
+			"test_project_files",
+			"test_server_default_port",
+			"test_ping_match",
+			"test_ping_reject",
+			"test_bag_suite",
+		]:
+			if call(t) != true:
+				failed += 1
+				push_error("FAIL %s: did not finish (runtime error?)" % t)
 	if failed > 0:
 		print("RESULT: FAIL")
 	else:
@@ -72,4 +79,24 @@ func test_ping_reject() -> bool:
 	assert_eq(server_script.is_ping_text(""), false, "empty_rejected")
 	assert_eq(server_script.is_ping_text("pingx"), false, "pingx_rejected")
 	assert_eq(server_script.is_ping_text("{ping}"), false, "envelope_rejected")
+	return true
+
+
+func _get_suite_filter() -> String:
+	var args: PackedStringArray = OS.get_cmdline_user_args()
+	args.append_array(OS.get_cmdline_args())
+	for i: int in range(args.size()):
+		var arg: String = args[i]
+		if arg.begins_with("--suite="):
+			return arg.get_slice("=", 1).strip_edges().to_lower()
+		if arg == "--suite" and i + 1 < args.size():
+			return args[i + 1].strip_edges().to_lower()
+		if arg == "bag":
+			return "bag"
+	return ""
+
+
+func test_bag_suite() -> bool:
+	var bag_tests: GDScript = load("res://tests/test_bag.gd")
+	bag_tests.run_all(self)
 	return true
