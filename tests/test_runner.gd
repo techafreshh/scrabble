@@ -49,6 +49,10 @@ func _initialize() -> void:
 		if call("test_blank_feedback_suite") != true:
 			failed += 1
 			push_error("FAIL test_blank_feedback_suite: did not finish (runtime error?)")
+	elif suite == "game_binding":
+		if call("test_game_binding_suite") != true:
+			failed += 1
+			push_error("FAIL test_game_binding_suite: did not finish (runtime error?)")
 	elif suite == "hotseat":
 		if call("test_hotseat_suite") != true:
 			failed += 1
@@ -86,6 +90,7 @@ func _initialize() -> void:
 			"test_placement_suite",
 			"test_strip_chat_suite",
 			"test_blank_feedback_suite",
+		"test_game_binding_suite",
 			"test_hotseat_suite",
 			"test_rooms_suite",
 		]:
@@ -176,6 +181,8 @@ func _get_suite_filter() -> String:
 			return "strip_chat"
 		if arg == "blank_feedback":
 			return "blank_feedback"
+		if arg == "game_binding":
+			return "game_binding"
 		if arg == "hotseat":
 			return "hotseat"
 		if arg == "rooms":
@@ -294,6 +301,12 @@ func test_strip_chat_suite() -> bool:
 func test_blank_feedback_suite() -> bool:
 	var blank_feedback_tests: GDScript = load("res://tests/test_blank_feedback.gd")
 	blank_feedback_tests.run_all(self)
+	return true
+
+
+func test_game_binding_suite() -> bool:
+	var game_binding_tests: GDScript = load("res://tests/test_game_binding.gd")
+	game_binding_tests.run_all(self)
 	return true
 
 
