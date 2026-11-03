@@ -317,7 +317,12 @@ def do_add_bot(args, code):
     payload = {"v": 1, "m": "add_bot", "code": code, "token": args.token or ""}
 
     def on_ok(reply):
-        return ("seats=%s" % _flat_str(reply.get("seats", "")),)
+        bot = reply.get("bot", reply.get("seat", "Botgomery"))
+        if not bot:
+            bot = "Botgomery"
+        return ("seat=%s" % bot,
+                "bot_seated=true",
+                "seats=%s" % _flat_str(reply.get("seats", "")),)
 
     return run_rpc_action(args.url, args.timeout, payload, args.expect, on_ok)
 

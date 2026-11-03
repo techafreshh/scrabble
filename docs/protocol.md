@@ -28,7 +28,7 @@ stdlib-only driver `tests/ws_probe.py` speaks exactly this surface.
 | `create_room` | `name` | New room, caller is seat 0 (host) | `code`, `token`, `seat: 0`, `seats: 1` |
 | `join_room` | `code`, `name`, optional `token` | Known `token` re-seats (rejoin); otherwise a fresh seat | `code`, `token`, `seat`/`you`, `seats` |
 | `rejoin` (`resync`) | `code`+`token` | Strict token rejoin: unknown `token` answers `BAD_TOKEN` and never mints a seat | full snapshot: `seat`/`you`, `started`, `turn`, `scores`, own `rack`, `board_tiles`, `over`, `ending`, `seats_list` |
-| `add_bot` | host `code`+`token` | Seats `Botgomery`; when the turn reaches a bot seat the server commits one `ScrabbleBot` move after a 5–15 s think delay (broadcast as `turn_update` with `bot_move: true`), passing when no legal move exists | `bot_seat`, `seats` |
+| `add_bot` | host `code`+`token` | Seats `Botgomery` (`is_bot: true` in `seats_list`); when the turn reaches a bot seat the server commits one `BotSeat` greedy-crossword move after a deterministic 5–15 s think delay (seeded per turn, `5 + abs(seed) % 11`; broadcast as `turn_update`/`game_over` with `bot_move: true`), passing (`recall` then `pass_turn`) when no legal move exists | `bot` (`Botgomery`), `bot_seat`, `seat` (`Botgomery`), `bot_seated: true`, `seats` |
 | `remove_bot` | host `code`+`token`, optional `seat` | Removes one bot seat (default: last) | `seats` |
 | `start_game` | host `code`+`token` | Builds one `LocalGame` for the seats | `started: true`, `turn`, `scores` |
 | `place_tiles` (`place`) | turn seat's `code`+`token`, `tiles` | Facade `place` (active seat only); `tiles: [{square: "H8", letter: "Q", blank_as: ""}]` (`{col,row,letter,blank}` dicts also accepted) | `accepted: true`, `points` (= `total`), `turn`, `scores`, `over` |
@@ -66,7 +66,7 @@ lexicon failure `NOT_IN_LEXICON` at the room boundary (the rules/facade
 `NOT_IN_DICTIONARY` spelling is unchanged underneath). `place_tiles`
 success replies carry both `points` (= `total`) and `total`; rejects
 carry `accepted: false`, `points: 0`, the mapped `reason`, and the
-preserved `reason_word`. When the turn reaches an `add_bot` seat, the server waits a deterministic 5–15 s think delay (seeded per turn) then commits one `ScrabbleBot` greedy-crossword move — broadcast as `turn_update`/`game_over` with `bot_move: true` — and passes when no legal move exists;
+preserved `reason_word`. When the turn reaches an `add_bot` seat, the server waits a deterministic 5–15 s think delay (seeded per turn, `5 + abs(seed) % 11`) then commits one `BotSeat` greedy-crossword move — broadcast as `turn_update`/`game_over` with `bot_move: true` and `board_tiles` — and passes (`recall` then `pass_turn`) when no legal move exists. The `add_bot` reply carries `bot: Botgomery`, integer `bot_seat`, `seat: Botgomery`, and `bot_seated: true`; the probe prints `seat=Botgomery` and `bot_seated=true`. Bot-vs-bot soak proof (2 bots per game, `--games` default 20, `--seed` default 1234, game `i` uses `base + i`, half-move cap 500, no exchanges): `godot --headless --path . -s res://tests/bot_soak.gd --games 20` exits 0 with `soak_games=20`, `soak_recaps=20`, and `illegal_states=0`;
 `debug_set_rack`/`debug_set_bag` need `options.test_mode: true` plus the
 host token and are refused with `BAD_STATE` otherwise.
 

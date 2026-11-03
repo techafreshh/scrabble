@@ -118,6 +118,24 @@ static func run_all(runner: SceneTree) -> void:
 	var bot2 := reg.add_bot(code2, tok2)
 	runner.assert_true(bool(bot2.get("ok", false)), "rooms_add_bot_ok")
 	runner.assert_eq(int(bot2.get("seats", -1)), 2, "rooms_add_bot_seats_2")
+	runner.assert_eq(str(bot2.get("bot", "")), "Botgomery", "rooms_add_bot_name")
+	runner.assert_eq(str(bot2.get("seat", "")), "Botgomery", "rooms_add_bot_seat_name")
+	runner.assert_true(bool(bot2.get("bot_seated", false)), "rooms_add_bot_seated")
+	runner.assert_true(int(bot2.get("bot_seat", -1)) >= 0, "rooms_add_bot_seat_int")
+	var bot_seats: Array = bot2.get("seats_list", [])
+	var bot_found := false
+	for s in bot_seats:
+		if s is Dictionary and str((s as Dictionary).get("name", "")) == "Botgomery" \
+				and bool((s as Dictionary).get("is_bot", false)) \
+				and int((s as Dictionary).get("seat", -1)) == int(bot2.get("bot_seat", -2)):
+			bot_found = true
+	runner.assert_true(bot_found, "rooms_add_bot_seats_list_is_bot")
+	var add_frames: Array = reg.handle_dict({"v": 1, "m": "add_bot", "code": code2, "token": tok2})
+	runner.assert_eq(add_frames.size(), 2, "rooms_add_bot_two_frames")
+	runner.assert_eq(str((add_frames[1] as Dictionary).get("m", "")), "seat_update", "rooms_add_bot_seat_update")
+	var rem_frames: Array = reg.handle_dict({"v": 1, "m": "remove_bot", "code": code2, "token": tok2})
+	runner.assert_eq(rem_frames.size(), 2, "rooms_remove_bot_two_frames")
+	runner.assert_eq(str((rem_frames[1] as Dictionary).get("m", "")), "seat_update", "rooms_remove_bot_seat_update")
 	runner.assert_true(bool(reg.remove_bot(code2, tok2).get("ok", false)), "rooms_remove_bot_ok")
 	var guest2 := reg.join_room(code2, "Guest2")
 	runner.assert_eq(int(guest2.get("seats", -1)), 2, "rooms_rejoin_after_remove_seats_2")
