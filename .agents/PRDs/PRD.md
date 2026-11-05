@@ -43,6 +43,7 @@ Pain points addressed: scheduling full-rules Scrabble with friends spread across
 
 ### In Scope
 **Core functionality**
+- [ ] Offline instant play: a **"Play now"** action on the Start screen that opens a playable table with no server and no room code — pass-and-play for 2–4 named seats plus optional bot seats (offline bot reuses the existing move generator). Added 2026-11-05 from real first-use feedback: the shipped build only reaches a game through Create/Join.
 - [ ] Live-session multiplayer, 2–4 players per table (humans + bots mixed), join via 4–6 char room code or link
 - [ ] Full official rules: 15×15 classic premium layout, 100-tile bag, 7-tile racks, blanks (letter picked at placement), 50-pt bingo, exchange (bag ≥ 7), all official end-game/final scoring, six-successive-scoreless-turns ending
 - [ ] Server-side SOWPODS validation; invalid plays rejected at commit with friendly inline message; no challenge rule
@@ -228,6 +229,7 @@ This PRD is delivered through the pi-dark-factory: each numbered task below beco
 - **T22** Exports: Web (single-threaded) + Windows/Linux presets, icons/splash, lexicon ships in PCK, size budget.
 - **T23** Web end-to-end: local static serving + local server, scripted browser play, tab-reload resume.
 - **T24** Game-feel polish sweep; deployment runbook drafted (systemd + Cloudflare Tunnel, NOT executed); portfolio README + `v0.1.0-mvp` tag.
+- **T25** Offline "Play now" (added 2026-11-05 from first-use feedback): third Start-screen action → seat picker (2–4 names, optional bot seats) → offline table over the existing hot-seat/LocalGame seam; bot binding reuses `scripts/server/bot.gd`'s move generator; headless-suite coverage for the flow (start screen dispatch, seat picker validation, offline bot commits + game completion).
 
 Operator-only steps (never issues: laps cannot do them) are tracked in the deployment runbook checklist: domain registration, Cloudflare/Tunnel bring-up, VPS systemd install, mobile store packaging.
 
