@@ -12,11 +12,12 @@
 # - is_nickname_valid() / is_create_enabled() / is_join_enabled().
 # - get_code()/set_code(code) (trimmed, uppercased join code).
 # - load_nickname()/save_nickname() (ConfigFile round-trip).
-# - request_create()/request_join() -> bool (emit signals when valid).
+# - request_create()/request_join()/request_play_now() -> bool (emit signals when valid).
 # - set_status(text)/get_status().
 #
-# No networking: the view only emits create_pressed(nickname) and
-# join_pressed(nickname, code) for later rooms.gd binding.
+# No networking: the view only emits create_pressed(nickname),
+# join_pressed(nickname, code), and play_now_pressed(nickname) for later
+# rooms.gd / offline boot binding.
 #
 # Run headless via res://tests/test_runner.gd (suite `hotseat`).
 class_name StartScreen
@@ -24,6 +25,7 @@ extends Control
 
 signal create_pressed(nickname: String)
 signal join_pressed(nickname: String, code: String)
+signal play_now_pressed(nickname: String)
 
 const MAX_NICKNAME_LEN := 16
 const SETTINGS_PATH := "user://wordtable_settings.cfg"
@@ -55,10 +57,13 @@ func _ensure_built() -> void:
 	var join_btn := get_node_or_null("%JoinButton") as Button
 	if join_btn == null:
 		join_btn = get_node_or_null("JoinButton") as Button
+	var play_now_btn := get_node_or_null("%PlayNowButton") as Button
+	if play_now_btn == null:
+		play_now_btn = get_node_or_null("PlayNowButton") as Button
 	var code_field := get_node_or_null("%CodeField") as LineEdit
 	if code_field == null:
 		code_field = get_node_or_null("CodeField") as LineEdit
-	if nick == null and create_btn == null and join_btn == null and code_field == null:
+	if nick == null and create_btn == null and join_btn == null and code_field == null and play_now_btn == null:
 		return
 	if nick != null:
 		nick.max_length = maxi(nick.max_length, MAX_NICKNAME_LEN)
@@ -79,6 +84,8 @@ func _ensure_built() -> void:
 		create_btn.pressed.connect(_on_create_button)
 	if join_btn != null and not join_btn.pressed.is_connected(_on_join_button):
 		join_btn.pressed.connect(_on_join_button)
+	if play_now_btn != null and not play_now_btn.pressed.is_connected(_on_play_now_button):
+		play_now_btn.pressed.connect(_on_play_now_button)
 	_built = true
 
 
@@ -153,6 +160,10 @@ func is_code_valid() -> bool:
 	return get_code().length() == 4
 
 
+func is_play_now_enabled() -> bool:
+	return is_nickname_valid()
+
+
 func load_nickname() -> String:
 	var cfg := ConfigFile.new()
 	if cfg.load(SETTINGS_PATH) == OK:
@@ -192,6 +203,18 @@ func request_join() -> bool:
 	return true
 
 
+# Offline dispatch: no room, no server connection. Emits play_now_pressed
+# and prints the headless acceptance marker; mirrors request_create's
+# nickname gate so a solo player cannot start nameless.
+func request_play_now() -> bool:
+	if not is_nickname_valid():
+		return false
+	save_nickname()
+	play_now_pressed.emit(_nickname)
+	print("playnow_offline=true")
+	return true
+
+
 func _on_nickname_changed(_new_text: String) -> void:
 	get_nickname()
 	_refresh_chrome()
@@ -210,6 +233,10 @@ func _on_join_button() -> void:
 	request_join()
 
 
+func _on_play_now_button() -> void:
+	request_play_now()
+
+
 func _refresh_chrome() -> void:
 	var create_btn := get_node_or_null("%CreateButton") as Button
 	if create_btn == null:
@@ -217,10 +244,15 @@ func _refresh_chrome() -> void:
 	var join_btn := get_node_or_null("%JoinButton") as Button
 	if join_btn == null:
 		join_btn = get_node_or_null("JoinButton") as Button
+	var play_now_btn := get_node_or_null("%PlayNowButton") as Button
+	if play_now_btn == null:
+		play_now_btn = get_node_or_null("PlayNowButton") as Button
 	if create_btn != null:
 		create_btn.disabled = not is_create_enabled()
 	if join_btn != null:
 		join_btn.disabled = not is_join_enabled()
+	if play_now_btn != null:
+		play_now_btn.disabled = not is_play_now_enabled()
 
 
 func _clean_name(raw: String) -> String:

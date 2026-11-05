@@ -35,10 +35,12 @@ const MAX_NAME_LEN := 16
 
 var _game: LocalGame = null
 var _names: Array = []
+var _bots: Array = []
 var _lexicon = null
 var _controller := PlacementController.new()
 var _last_reject_text := ""
 var _built := false
+var _bot_busy := false
 
 
 func _ready() -> void:
@@ -86,7 +88,9 @@ func get_lexicon():
 
 # Builds the hot-seat game: names clamped to 2-4 seats (short lists are
 # padded with Player N, long lists sliced), then a LocalGame owned here.
-func new_hotseat(names: Array, seed: int) -> HotseatTable:
+# Optional bot_flags parallel the seats (short lists pad false, long lists
+# sliced); bot seats play themselves via take_bot_turn with no Net peer.
+func new_hotseat(names: Array, seed: int, bot_flags: Array = []) -> HotseatTable:
 	_names.clear()
 	for raw in names.slice(0, MAX_SEATS):
 		_names.append(_clean_name(raw))
@@ -94,11 +98,39 @@ func new_hotseat(names: Array, seed: int) -> HotseatTable:
 	while _names.size() < MIN_SEATS:
 		n += 1
 		_names.append("Player %d" % n)
+	_bots.clear()
+	for i: int in range(_names.size()):
+		var flag := false
+		if i < bot_flags.size():
+			flag = bool(bot_flags[i])
+		_bots.append(flag)
 	_game = LocalGame.new(_names.size(), seed, _lexicon)
 	_last_reject_text = ""
+	_bot_busy = false
 	sync_rack_to_controller()
 	_refresh_chrome()
+	print("hotseat_players=%d" % _names.size())
 	return self
+
+
+func is_bot_seat(i: int) -> bool:
+	if i < 0 or i >= _bots.size():
+		return false
+	return bool(_bots[i])
+
+
+func get_bot_flags() -> Array:
+	return _bots.duplicate()
+
+
+func set_bot_seats(flags: Array) -> void:
+	_bots.clear()
+	for i: int in range(_names.size()):
+		var flag := false
+		if i < flags.size():
+			flag = bool(flags[i])
+		_bots.append(flag)
+	_refresh_chrome()
 
 
 func get_game() -> LocalGame:
@@ -166,6 +198,7 @@ func commit_move(placements: Array, blank_map: Dictionary = {}) -> Dictionary:
 		_last_reject_text = CommitFx.reject_text_for(res)
 	_maybe_finish()
 	_refresh_chrome()
+	_schedule_bot()
 	return res
 
 
@@ -195,6 +228,7 @@ func exchange(count: int) -> Dictionary:
 	sync_rack_to_controller()
 	_maybe_finish()
 	_refresh_chrome()
+	_schedule_bot()
 	return res
 
 
@@ -205,7 +239,80 @@ func pass_turn() -> Dictionary:
 	sync_rack_to_controller()
 	_maybe_finish()
 	_refresh_chrome()
+	_schedule_bot()
 	return res
+
+
+# Offline bot turn for the current seat via the pure ScrabbleBot generator
+# (board + rack + lexicon, no Net peer). Returns NOT_BOT when the current
+# seat is human. A NO_MOVE generator result falls back to pass_turn() so
+# bot seats never stall the table. Prints `offline_bot_move=true` whenever
+# the bot seat acted. bot_seed == -1 means a random live seed; headless
+# tests pass an explicit seed for determinism.
+func take_bot_turn(bot_seed: int = -1) -> Dictionary:
+	if _game == null or _game.is_over():
+		return {"ok": false, "reason": "NO_GAME"}
+	var seat := _game.current_player()
+	if not is_bot_seat(seat):
+		return {"ok": false, "reason": "NOT_BOT"}
+	var lex = _lexicon
+	if lex == null:
+		var dict := WordDictionary.new()
+		dict.load_from_path(WordDictionary.DEFAULT_PATH)
+		lex = dict
+	var seed := bot_seed
+	if seed == -1:
+		var rng := RandomNumberGenerator.new()
+		rng.randomize()
+		seed = rng.randi()
+	var rack: Array = _game.rack_letters(seat)
+	var mv := ScrabbleBot.generate_move(_game.board, rack, lex, seed)
+	if not bool(mv.get("ok", false)):
+		var res := pass_turn()
+		print("offline_bot_move=true")
+		return res
+	var placements: Array = mv.get("placements", [])
+	var blank_map: Dictionary = mv.get("blank_map", {})
+	var res := commit_move(placements, blank_map)
+	print("offline_bot_move=true")
+	return res
+
+
+# Full reset for Rematch: same seats and bot flags, a full 100-tile set
+# via the LocalGame.rematch() seam, resynced controller, cleared reject
+# text. Names and bots are preserved.
+func rematch() -> void:
+	if _game == null:
+		return
+	_game.rematch()
+	_last_reject_text = ""
+	_bot_busy = false
+	sync_rack_to_controller()
+	_refresh_chrome()
+
+
+# Deferred bot auto-chain: after every turn-advancing path, plays one bot
+# turn when the new current seat is a bot and the game is not over.
+# Deferred (not inline) so UI input stays re-entrant; guarded against
+# re-entrancy so headless direct take_bot_turn calls stay synchronous.
+func _schedule_bot() -> void:
+	if _game == null or _game.is_over():
+		return
+	if not is_bot_seat(_game.current_player()):
+		return
+	call_deferred("_deferred_bot")
+
+
+func _deferred_bot() -> void:
+	if _bot_busy:
+		return
+	if _game == null or _game.is_over():
+		return
+	if not is_bot_seat(_game.current_player()):
+		return
+	_bot_busy = true
+	take_bot_turn()
+	_bot_busy = false
 
 
 # Mounts the reconnect overlay as a hidden top-level child and binds it to
